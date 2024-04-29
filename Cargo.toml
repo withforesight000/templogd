@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "daemon",
+    "common"
+]
+resolver = "2"
+
+[profile.release]
+opt-level = "z"
+debug = false
+lto = true
+overflow-checks = true
+codegen-units = 1
+panic = "abort"
+strip = true
