@@ -4,7 +4,7 @@ use chrono::Local;
 use nix::unistd::isatty;
 use syslog::{Formatter3164, LoggerBackend};
 
-pub trait Logger {
+pub trait Logger: Send{
     fn info(&mut self, message: &str);
     fn error(&mut self, message: &str);
 }

@@ -1,11 +1,21 @@
-use common::logger;
+use std::sync::Arc;
 
+use common::logger;
+use tokio::sync::Mutex;
+
+mod controller;
+mod infra;
+mod gateway;
+mod model;
+mod usecase;
 // static PROCESS_NAME: &str = "templogd";
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // TODO: Add command line argument parsing
     // TODO: consoder how to initialize logger
-    let mut logger = logger::new(logger::LoggerType::STDOUT);
+    let logger = Arc::new(Mutex::new(logger::new(logger::LoggerType::STDOUT)));
 
-    logger.info("Hello, world!");
+    infra::tasks::run(logger.clone()).await;
+    logger.lock().await.info("exiting...");
 }
