@@ -1,5 +1,3 @@
 pub trait TemperatureRepository {
-    fn get_temperature(&self) -> Result<f32, Box<dyn std::error::Error>>;
+    async fn get_temperature(&self, device_id: &str) -> Result<f64, Box<dyn std::error::Error>>;
 }
-
-

@@ -11,6 +11,7 @@ pub mod errors;
 // use serde_json::Value;
 // use std::fmt;
 
+#[derive(Debug)]
 pub struct ReqwestClient {
     client: reqwest::Client,
 }
@@ -24,11 +25,11 @@ impl ReqwestClient {
 
     async fn handle_response(
         response: reqwest::Response,
-    ) -> Result<HashMap<String, Value>, ClientError> {
+    ) -> Result<Value, ClientError> {
         match response.status() {
             StatusCode::OK => {
-                let body: Result<HashMap<String, Value>, reqwest::Error> =
-                    response.json::<HashMap<String, Value>>().await;
+                let body =
+                    response.json().await;
                 match body {
                     Ok(body) => Ok(body),
                     Err(error) => Err(ClientError::BodyError(error)),
@@ -48,7 +49,7 @@ pub trait HttpClient {
         &self,
         url: &str,
         bearer_token: &str,
-    ) -> Result<HashMap<String, Value>, Box<dyn std::error::Error>>;
+    ) -> Result<Value, Box<dyn std::error::Error>>;
 }
 
 impl HttpClient for ReqwestClient {
@@ -56,7 +57,7 @@ impl HttpClient for ReqwestClient {
         &self,
         url: &str,
         bearer_token: &str,
-    ) -> Result<HashMap<String, Value>, Box<dyn std::error::Error>> {
+    ) -> Result<Value, Box<dyn std::error::Error>> {
         let response = self
             .client
             .get(url)

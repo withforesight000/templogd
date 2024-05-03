@@ -1,10 +1,13 @@
+use std::fmt::Debug;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use tracing::instrument;
 
-use common::logger;
+use crate::config::Config;
+use crate::model::repository::temperature::TemperatureRepository;
 use crate::usecase;
 
-pub async fn run(logger: Arc<Mutex<Box<dyn logger::Logger>>>) {
-    usecase::log_temp::run(logger).await;
+#[instrument(parent = None)]
+pub async fn run(config: Arc<Config>, client: impl TemperatureRepository + Debug) {
+    usecase::log_temp::run(config, client).await;
 }
