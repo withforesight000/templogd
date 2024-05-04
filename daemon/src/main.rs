@@ -3,8 +3,8 @@ use tracing::info;
 
 mod config;
 mod controller;
-mod infra;
 mod gateway;
+mod infra;
 mod model;
 mod usecase;
 // static PROCESS_NAME: &str = "templogd";
@@ -14,12 +14,20 @@ mod usecase;
 #[command(version, about, long_about = None)]
 struct Args {
     /// API token for the Nature Remo API
-    #[arg(short, long, required = true, env = "TEMPLOGD_NATURE_REMO_API_TOKEN")]
+    #[arg(long, required = true, env = "TEMPLOGD_NATURE_REMO_API_TOKEN")]
     api_token: String,
 
     /// Device ID for the Nature Remo device
-    #[arg(short, long, required = true, env = "TEMPLOGD_NATURE_REMO_DEVICE_ID")]
+    #[arg(long, required = true, env = "TEMPLOGD_NATURE_REMO_DEVICE_ID")]
     device_id: String,
+
+    /// Device ID for the Nature Remo device
+    #[arg(long, required = true, env = "TEMPLOGD_REDIS_HOST")]
+    redis_host: String,
+
+    /// Device ID for the Nature Remo device
+    #[arg(long, default_value_t = 6379, env = "TEMPLOGD_REDIS_PORT")]
+    redis_port: i32,
 }
 
 #[tokio::main]
@@ -28,13 +36,12 @@ async fn main() {
     let config = config::new(args);
 
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::INFO)
         .init();
-    let number_of_yaks = 3;
-    // this creates a new event, outside of any spans.
-    info!(number_of_yaks, "preparing to shave yaks");
+    // let number_of_yaks = 3;
+    // // this creates a new event, outside of any spans.
+    // info!(number_of_yaks, "preparing to shave yaks");
 
     infra::tasks::run(config).await;
     info!("exiting...");
-
 }

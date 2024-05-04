@@ -5,6 +5,11 @@ services:
       context: .
       dockerfile: ./Dockerfile
     restart: always
+    environment:
+      - TEMPLOGD_NATURE_REMO_API_TOKEN=XXX
+      - TEMPLOGD_NATURE_REMO_DEVICE_ID=YYY
+      - TEMPLOGD_REDIS_HOST=redis
+      - TEMPLOGD_REDIS_PORT=6379
 
-  # redis:
-  #   image: redis:7.2
+  redis:
+    image: redis:7.2

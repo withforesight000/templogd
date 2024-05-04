@@ -1,9 +1,8 @@
-use std::collections::HashMap;
-
 use reqwest::StatusCode;
 use serde_json::Value;
 
 use crate::infra::http_client::errors::ClientError;
+use crate::gateway::interface::http_client::HttpClient;
 
 pub mod errors;
 // #[cfg(test)]
@@ -41,15 +40,6 @@ impl ReqwestClient {
             )),
         }
     }
-}
-
-// #[cfg_attr(test, automock)]
-pub trait HttpClient {
-    async fn get_with_bearer_token(
-        &self,
-        url: &str,
-        bearer_token: &str,
-    ) -> Result<Value, Box<dyn std::error::Error>>;
 }
 
 impl HttpClient for ReqwestClient {
