@@ -4,7 +4,9 @@ use tracing::instrument;
 
 use crate::config::Config;
 use crate::controller;
+use crate::gateway::ambient_condition::AmbientConditionRepository;
 use crate::gateway::nature_remo_client::NatureRemoClient;
+use crate::infra;
 
 #[instrument]
 pub async fn run(config: Arc<Config>) {
@@ -17,8 +19,17 @@ pub async fn run(config: Arc<Config>) {
             crate::infra::http_client::ReqwestClient::new(),
             cloned_config.get_api_token().to_string(),
             "https://api.nature.global".to_string(),
+            cloned_config.get_device_id().to_string(),
         );
-        controller::log_temp::run(cloned_config, client, tx).await;
+        controller::log_temp::run(
+            cloned_config,
+            AmbientConditionRepository::DataSource::<
+                NatureRemoClient<infra::http_client::ReqwestClient>,
+                infra::redis_client::AsyncRedisCrateClient,
+            >(client),
+            tx,
+        )
+        .await;
     });
 
     let another_cloned_config = config.clone();
@@ -28,7 +39,15 @@ pub async fn run(config: Arc<Config>) {
         let address = format!("redis://{}:{}", redis_host, redis_port);
         let client = crate::infra::redis_client::AsyncRedisCrateClient::new(&address).await;
 
-        controller::log_to_redis::run(another_cloned_config, client, rx).await;
+        controller::log_to_redis::run(
+            another_cloned_config,
+            AmbientConditionRepository::DataStore::<
+                NatureRemoClient<infra::http_client::ReqwestClient>,
+                infra::redis_client::AsyncRedisCrateClient,
+            >(client),
+            rx,
+        )
+        .await;
     });
 
     _ = tokio::join!(

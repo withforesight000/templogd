@@ -1,10 +1,17 @@
 use std::sync::Arc;
 
+use tracing::instrument;
+
 use crate::config::Config;
-use crate::gateway::interface::redis_client::RedisClient;
-use crate::model::channel::redis_command::RedisCommand;
+use crate::model::channel::datastore_operation::DatastoreOperation;
+use crate::model::repository::ambient_condition::AmbientCondition;
 use crate::usecase;
 
-pub async fn run(config: Arc<Config>, client: impl RedisClient, rx: tokio::sync::mpsc::Receiver<RedisCommand>) {
+#[instrument(parent = None, skip(client))]
+pub async fn run(
+    config: Arc<Config>,
+    client: impl AmbientCondition,
+    rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
+) {
     usecase::log_to_redis::run(config, client, rx).await;
 }

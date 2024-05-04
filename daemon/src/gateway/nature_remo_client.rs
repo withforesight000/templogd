@@ -4,12 +4,14 @@ use serde_json::Value;
 use tracing::{debug, info};
 
 use crate::gateway::interface::http_client::HttpClient;
+use crate::gateway::interface::data_source::DataSource;
 use crate::model;
 
 pub struct NatureRemoClient<T: HttpClient> {
     client: T,
     api_token: String,
     base_address: String,
+    device_id: String
 }
 
 impl<T: HttpClient + Debug> fmt::Debug for NatureRemoClient<T> {
@@ -23,27 +25,26 @@ impl<T: HttpClient + Debug> fmt::Debug for NatureRemoClient<T> {
 }
 
 impl<T: HttpClient> NatureRemoClient<T> {
-    pub fn new(client: T, api_token: String, base_address: String) -> NatureRemoClient<T> {
+    pub fn new(client: T, api_token: String, base_address: String, device_id: String) -> NatureRemoClient<T> {
         NatureRemoClient {
             client,
             api_token,
             base_address,
+            device_id,
         }
     }
 
     async fn get_devices(&self) -> Result<Value, Box<dyn std::error::Error>> {
         let url = format!("{}/1/devices", self.base_address);
-        self
-            .client
+        self.client
             .get_with_bearer_token(&url, self.api_token.as_str())
             .await
     }
 }
 
-impl<T: HttpClient> model::repository::ambient_condition::AmbientCondition for NatureRemoClient<T> {
-    async fn get_temperature(
+impl<T: HttpClient> DataSource for NatureRemoClient<T> {
+    async fn fetch_ambient_condition(
         &self,
-        device_id: &str,
     ) -> Result<model::ambient_codition::AmbientCondition, Box<dyn std::error::Error>> {
         let devices = self.get_devices().await;
         // info!("Devices: {:?}", devices);
@@ -56,7 +57,7 @@ impl<T: HttpClient> model::repository::ambient_condition::AmbientCondition for N
                     .as_array()
                     .unwrap()
                     .iter()
-                    .find(|d| d["id"].as_str().unwrap() == device_id)
+                    .find(|d| d["id"].as_str().unwrap() == self.device_id)
                     .unwrap();
                 Ok(model::ambient_codition::new(
                     device["newest_events"]["te"]["val"].as_f64().unwrap(),

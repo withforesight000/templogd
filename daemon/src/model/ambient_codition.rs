@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct AmbientCondition {
     temperature: f64,
     humidity: f64,
