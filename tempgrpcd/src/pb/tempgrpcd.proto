@@ -10,11 +10,11 @@ message TempgrpcdRequest {
 
 message TempgrpcdResponse {
     uint32 version = 1;
-    Status status = 2;
+    StatusCode status = 2;
     map<uint64, AmbientCondition> ambient_conditions = 3;
 }
 
-enum Status {
+enum StatusCode {
     OK = 0;
     INVALID_REQUEST = 1;
     NOT_FOUND = 2;
