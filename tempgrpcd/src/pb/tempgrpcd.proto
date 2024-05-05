@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package tempgrpcd;
+
+message TempgrpcdRequest {
+    uint32 version = 1;
+    uint64 start_time = 2;
+    uint64 end_time = 3;
+}
+
+message TempgrpcdResponse {
+    uint32 version = 1;
+    Status status = 2;
+    map<uint64, AmbientCondition> ambient_conditions = 3;
+}
+
+enum Status {
+    OK = 0;
+    INVALID_REQUEST = 1;
+    NOT_FOUND = 2;
+    INTERNAL_ERROR = 3;
+}
+
+message AmbientCondition {
+    float temperature = 1;
+    float humidity = 2;
+    float illumination = 3;
+}
+
+service Tempgrpcd {
+    rpc GetAmbientConditions(TempgrpcdRequest) returns (TempgrpcdResponse);
+}

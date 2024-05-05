@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "templogd",
-    "common"
+    "common",
+    "tempgrpcd"
 ]
 resolver = "2"
 
