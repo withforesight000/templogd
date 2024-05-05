@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 chrono = "0.4"
 nix = { version = "0.28.0", features = ["fs"] }
+redis = { version = "0.25", features = ["connection-manager", "tokio-comp", "streams"] }
 syslog = "6.1"
 
 [build-dependencies]

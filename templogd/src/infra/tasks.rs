@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tracing::instrument;
 
+use common;
 use crate::config::Config;
 use crate::controller;
 use crate::gateway::ambient_condition::AmbientConditionRepository;
@@ -25,7 +26,7 @@ pub async fn run(config: Arc<Config>) {
             cloned_config,
             AmbientConditionRepository::DataSource::<
                 NatureRemoClient<infra::http_client::ReqwestClient>,
-                infra::redis_client::AsyncRedisCrateClient,
+                common::infra::redis_client::AsyncRedisCrateClient,
             >(client),
             tx,
         )
@@ -37,13 +38,13 @@ pub async fn run(config: Arc<Config>) {
         let redis_host = another_cloned_config.get_redis_host();
         let redis_port = another_cloned_config.get_redis_port();
         let address = format!("redis://{}:{}", redis_host, redis_port);
-        let client = crate::infra::redis_client::AsyncRedisCrateClient::new(&address).await;
+        let client = common::infra::redis_client::AsyncRedisCrateClient::new(&address).await;
 
         controller::log_to_redis::run(
             another_cloned_config,
             AmbientConditionRepository::DataStore::<
                 NatureRemoClient<infra::http_client::ReqwestClient>,
-                infra::redis_client::AsyncRedisCrateClient,
+                common::infra::redis_client::AsyncRedisCrateClient,
             >(client),
             rx,
         )
