@@ -4,12 +4,26 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
+      target: templogd
     restart: always
     environment:
       - TEMPLOGD_NATURE_REMO_API_TOKEN=XXX
       - TEMPLOGD_NATURE_REMO_DEVICE_ID=YYY
       - TEMPLOGD_REDIS_HOST=redis
       - TEMPLOGD_REDIS_PORT=6379
+
+  tempgrpcd:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      target: tempgrpcd
+    restart: always
+    environment:
+      - TEMPGRPCD_REDIS_HOST=redis
+      - TEMPGRPCD_REDIS_PORT=6379
+      - RUST_BACKTRACE=1
+    ports:
+      - 50051:50051
 
   redis:
     image: redis:7.2

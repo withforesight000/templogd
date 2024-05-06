@@ -1,17 +1,14 @@
-use std::sync::Arc;
+use tracing::{info, instrument};
 
-use tracing::instrument;
-
-use crate::config::Config;
-use common::model::channel::datastore_operation::DatastoreOperation;
 use crate::model::repository::ambient_condition::AmbientCondition;
 use crate::usecase;
+use common::model::channel::datastore_operation::DatastoreOperation;
 
 #[instrument(parent = None, skip(client))]
 pub async fn run(
-    config: Arc<Config>,
     client: impl AmbientCondition,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
 ) {
-    usecase::log_to_redis::run(config, client, rx).await;
+    info!("hogehogehogehogehoge");
+    usecase::fetch_from_redis::run(client, rx).await;
 }

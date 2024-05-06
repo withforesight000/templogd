@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::{info, instrument};
 
 use crate::config::Config;
-use crate::model::channel::datastore_operation::DatastoreOperation;
+use common::model::channel::datastore_operation::DatastoreOperation;
 use crate::model::repository::ambient_condition::AmbientCondition;
 
 #[instrument(parent = None, skip(client))]
@@ -23,6 +23,9 @@ pub async fn run(
                 let res = client.save_ambient_condition(ambient_condition).await.unwrap();
                 // let res = client.xadd(&key, &id, items_slice).await.unwrap();
                 info!(":::Result from redis: {:?}", res)
+            }
+            DatastoreOperation::FetchAmbientConditions { start: _, end: _, resp: _ } => {
+                panic!()
             }
         }
     }

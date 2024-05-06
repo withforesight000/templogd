@@ -10,5 +10,6 @@ chrono = "0.4"
 nix = { version = "0.28.0", features = ["fs"] }
 redis = { version = "0.25", features = ["connection-manager", "tokio-comp", "streams"] }
 syslog = "6.1"
+tokio = { version = "1.37", features = ["full"] }
 
 [build-dependencies]

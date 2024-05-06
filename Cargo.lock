@@ -337,6 +337,7 @@ dependencies = [
  "nix",
  "redis",
  "syslog",
+ "tokio",
 ]
 
 [[package]]
@@ -1529,7 +1530,9 @@ dependencies = [
 name = "tempgrpcd"
 version = "0.1.0"
 dependencies = [
+ "common",
  "prost",
+ "redis",
  "tokio",
  "tonic",
  "tonic-build",

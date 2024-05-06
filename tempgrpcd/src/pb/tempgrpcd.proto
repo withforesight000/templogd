@@ -10,15 +10,7 @@ message TempgrpcdRequest {
 
 message TempgrpcdResponse {
     uint32 version = 1;
-    StatusCode status = 2;
-    map<uint64, AmbientCondition> ambient_conditions = 3;
-}
-
-enum StatusCode {
-    OK = 0;
-    INVALID_REQUEST = 1;
-    NOT_FOUND = 2;
-    INTERNAL_ERROR = 3;
+    map<string, AmbientCondition> ambient_conditions = 2;
 }
 
 message AmbientCondition {
@@ -30,3 +22,4 @@ message AmbientCondition {
 service Tempgrpcd {
     rpc GetAmbientConditions(TempgrpcdRequest) returns (TempgrpcdResponse);
 }
+

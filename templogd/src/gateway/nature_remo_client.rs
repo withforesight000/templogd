@@ -5,7 +5,6 @@ use tracing::{debug, info};
 
 use crate::gateway::interface::http_client::HttpClient;
 use crate::gateway::interface::data_source::DataSource;
-use crate::model;
 
 pub struct NatureRemoClient<T: HttpClient> {
     client: T,
@@ -45,7 +44,7 @@ impl<T: HttpClient> NatureRemoClient<T> {
 impl<T: HttpClient> DataSource for NatureRemoClient<T> {
     async fn fetch_ambient_condition(
         &self,
-    ) -> Result<model::ambient_codition::AmbientCondition, Box<dyn std::error::Error>> {
+    ) -> Result<common::model::ambient_condition::AmbientCondition, Box<dyn std::error::Error>> {
         let devices = self.get_devices().await;
         // info!("Devices: {:?}", devices);
 
@@ -59,7 +58,7 @@ impl<T: HttpClient> DataSource for NatureRemoClient<T> {
                     .iter()
                     .find(|d| d["id"].as_str().unwrap() == self.device_id)
                     .unwrap();
-                Ok(model::ambient_codition::new(
+                Ok(common::model::ambient_condition::new(
                     device["newest_events"]["te"]["val"].as_f64().unwrap(),
                     device["newest_events"]["hu"]["val"].as_f64().unwrap(),
                     device["newest_events"]["il"]["val"].as_f64().unwrap(),

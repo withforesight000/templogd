@@ -19,7 +19,7 @@ impl<S: DataSource, D: DataStore> model::repository::ambient_condition::AmbientC
 {
     async fn fetch_ambient_condition(
         &self,
-    ) -> Result<model::ambient_codition::AmbientCondition, Box<dyn std::error::Error>> {
+    ) -> Result<common::model::ambient_condition::AmbientCondition, Box<dyn std::error::Error>> {
         match self {
             AmbientConditionRepository::DataSource(data_source) => {
                 data_source.fetch_ambient_condition().await
@@ -32,7 +32,7 @@ impl<S: DataSource, D: DataStore> model::repository::ambient_condition::AmbientC
 
     async fn save_ambient_condition(
         &mut self,
-        ambient_condition: model::ambient_codition::AmbientCondition,
+        ambient_condition: common::model::ambient_condition::AmbientCondition,
     ) -> Result<Value, impl Error> {
         match self {
             AmbientConditionRepository::DataSource(_) => {

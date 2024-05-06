@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::instrument;
 
 use crate::config::Config;
-use crate::model::channel::datastore_operation::DatastoreOperation;
+use common::model::channel::datastore_operation::DatastoreOperation;
 use crate::model::repository::ambient_condition::AmbientCondition;
 use crate::usecase;
 

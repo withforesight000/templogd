@@ -22,4 +22,13 @@ impl AsyncRedisCrateClient {
     ) -> Result<Value, redis::RedisError> {
         self.connection.xadd(key, id, items).await
     }
+
+    pub async fn xrange(
+        &mut self,
+        key: &str,
+        start: impl ToRedisArgs + std::marker::Send + std::marker::Sync,
+        end: impl ToRedisArgs + std::marker::Send + std::marker::Sync,
+    ) -> Result<Value, redis::RedisError> {
+        self.connection.xrange(key, start, end).await
+    }
 }
