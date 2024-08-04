@@ -8,8 +8,12 @@ edition = "2021"
 [dependencies]
 chrono = "0.4"
 nix = { version = "0.29", features = ["fs"] }
-redis = { version = "0.25", features = ["connection-manager", "tokio-comp", "streams"] }
-syslog = "6.1"
-tokio = { version = "1.37", features = ["full"] }
+redis = { version = "0.26", features = ["connection-manager", "tokio-comp", "streams"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde_json = { version = "1.0" }
+syslog = "7.0"
+tokio = { version = "1.39", features = ["full"] }
+tracing = "0.1"
 
-[build-dependencies]
+[dev-dependencies]
+mockall = "0.13"

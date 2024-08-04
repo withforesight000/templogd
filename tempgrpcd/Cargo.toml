@@ -9,8 +9,8 @@ build = "src/build.rs"
 [dependencies]
 common = { path = "../common" }
 prost = "0.13"
-redis = { version = "0.25", features = ["connection-manager", "tokio-comp", "streams"] }
-tokio = { version = "1.37", features = ["full"] }
+redis = { version = "0.26", features = ["connection-manager", "tokio-comp", "streams"] }
+tokio = { version = "1.39", features = ["full"] }
 tonic = "0.12"
 tonic-reflection = "0.12"
 tracing = "0.1"

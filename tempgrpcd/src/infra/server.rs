@@ -1,3 +1,4 @@
+use common::model::ambient_condition::AmbientCondition;
 use tonic::transport::Server;
 use tonic_reflection::server::Builder;
 use tracing::info;
@@ -18,7 +19,8 @@ pub async fn run() {
     let _task_which_fetches_from_redis = tokio::spawn(async move {
         let address = format!("redis://{}:{}", "redis", 6379);
         let client = common::infra::redis_client::AsyncRedisCrateClient::new(&address).await;
-        controller::fetch_from_redis::run(client, rx).await
+        let ambient_repository_repo = crate::gateway::ambient_condition::AmbientConditionRepository::new(client);
+        controller::fetch_from_redis::run(ambient_repository_repo, rx).await
     });
 
     let _task_grpc_server = Server::builder()

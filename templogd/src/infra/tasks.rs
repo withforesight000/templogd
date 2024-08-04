@@ -5,8 +5,8 @@ use tracing::instrument;
 use common;
 use crate::config::Config;
 use crate::controller;
-use crate::gateway::ambient_condition::AmbientConditionRepository;
-use crate::gateway::nature_remo_client::NatureRemoClient;
+use common::gateway::ambient_condition::AmbientConditionRepository;
+use common::gateway::nature_remo_client::NatureRemoClient;
 use crate::infra;
 
 #[instrument]
@@ -16,8 +16,8 @@ pub async fn run(config: Arc<Config>) {
     // TODO: logs to the Redis
     let cloned_config = config.clone();
     let task_which_accesses_to_nature_remo_api = tokio::spawn(async move {
-        let client = NatureRemoClient::new(
-            crate::infra::http_client::ReqwestClient::new(),
+        let nature_remo_client = NatureRemoClient::new(
+            common::infra::http_client::ReqwestClient::new(),
             cloned_config.get_api_token().to_string(),
             "https://api.nature.global".to_string(),
             cloned_config.get_device_id().to_string(),
@@ -27,7 +27,7 @@ pub async fn run(config: Arc<Config>) {
             AmbientConditionRepository::DataSource::<
                 NatureRemoClient<infra::http_client::ReqwestClient>,
                 common::infra::redis_client::AsyncRedisCrateClient,
-            >(client),
+            >(nature_remo_client),
             tx,
         )
         .await;

@@ -1,4 +1,6 @@
-use redis::{aio::ConnectionManager, AsyncCommands, ToRedisArgs, Value};
+use std::marker::{Send, Sync};
+
+use redis::{aio::ConnectionManager, AsyncCommands, RedisError, ToRedisArgs, Value};
 
 pub struct AsyncRedisCrateClient {
     connection: ConnectionManager,
@@ -10,25 +12,27 @@ impl AsyncRedisCrateClient {
         let connection = ConnectionManager::new(client).await.unwrap();
         Self { connection }
     }
+}
 
-    pub async fn xadd(
+impl crate::gateway::interface::redis::Redis for AsyncRedisCrateClient {
+    async fn xadd(
         &mut self,
         key: &str,
         id: &str,
         items: &[(
-            impl ToRedisArgs + std::marker::Send + std::marker::Sync,
-            impl ToRedisArgs + std::marker::Send + std::marker::Sync,
+            impl ToRedisArgs + Send + Sync,
+            impl ToRedisArgs + Send + Sync,
         )],
-    ) -> Result<Value, redis::RedisError> {
+    ) -> Result<Value, RedisError> {
         self.connection.xadd(key, id, items).await
     }
 
-    pub async fn xrange(
+    async fn xrange(
         &mut self,
         key: &str,
-        start: impl ToRedisArgs + std::marker::Send + std::marker::Sync,
-        end: impl ToRedisArgs + std::marker::Send + std::marker::Sync,
-    ) -> Result<Value, redis::RedisError> {
+        start: impl ToRedisArgs + Send + Sync,
+        end: impl ToRedisArgs + Send + Sync,
+    ) -> Result<Value, RedisError> {
         self.connection.xrange(key, start, end).await
     }
 }
