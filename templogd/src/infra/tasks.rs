@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use common::infra::null_nature_remo_client::NullNatureRemoClient;
 use common::infra::{async_redis_client, null_redis_client};
+use common::infra::http_client::ReqwestClient;
+use common::infra::null_nature_remo_client::NullNatureRemoClient;
+
 use tracing::instrument;
 
 use common;
@@ -18,7 +20,7 @@ pub async fn run(config: Arc<Config>) {
     let cloned_config = config.clone();
     let task_which_accesses_to_nature_remo_api = tokio::spawn(async move {
         let nature_remo_client = NatureRemoClient::new(
-            common::infra::http_client::ReqwestClient::new(),
+            ReqwestClient::new(),
             cloned_config.get_api_token().to_string(),
             "https://api.nature.global".to_string(),
             cloned_config.get_device_id().to_string(),
