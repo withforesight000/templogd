@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
 use crate::config::Config;
@@ -12,6 +13,7 @@ pub async fn run(
     config: Arc<Config>,
     client: impl AmbientCondition,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
+    cancellation_token: CancellationToken,
 ) {
-    usecase::log_to_redis::run(config, client, rx).await;
+    usecase::log_to_redis::run(config, client, rx, cancellation_token).await;
 }

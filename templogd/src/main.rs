@@ -30,15 +30,14 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    let args = Args::parse();
-    let config = config::new(args);
-
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
-    // let number_of_yaks = 3;
-    // // this creates a new event, outside of any spans.
-    // info!(number_of_yaks, "preparing to shave yaks");
+    info!("starting templogd...");
+
+    let args = Args::parse();
+    let config = config::new(args);
+    info!("config loaded");
 
     infra::tasks::run(config).await;
     info!("exiting...");

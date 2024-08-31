@@ -1636,6 +1636,7 @@ dependencies = [
  "prost",
  "redis",
  "tokio",
+ "tokio-util",
  "tonic",
  "tonic-build",
  "tonic-reflection",
@@ -1654,6 +1655,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

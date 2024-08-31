@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};
 
 use crate::config::Config;
@@ -11,6 +12,7 @@ pub async fn run(
     config: Arc<Config>,
     client: impl AmbientCondition,
     tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
+    cancellation_token: CancellationToken,
 ) {
     loop {
         let condition = client.fetch_current_ambient_condition().await.unwrap();
@@ -25,6 +27,12 @@ pub async fn run(
         })
         .await
         .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {}
+            _ = cancellation_token.cancelled() => {
+                info!("confirmed cancellation token was cancelled");
+                break;
+            }
+        }
     }
 }

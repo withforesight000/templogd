@@ -1,5 +1,5 @@
 use common::model::channel::datastore_operation::DatastoreOperation;
-use tracing::info;
+use tracing::{info, instrument};
 use std::collections::HashMap;
 use tonic::{Request, Response, Status};
 
@@ -8,6 +8,7 @@ use crate::pb::{
     tempgrpcd::{TempgrpcdRequest, TempgrpcdResponse},
 };
 
+#[instrument]
 pub async fn get_ambient_conditions(
     request: Request<TempgrpcdRequest>,
     tx: &tokio::sync::mpsc::Sender<DatastoreOperation>,
