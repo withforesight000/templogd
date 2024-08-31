@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::marker::{Send, Sync};
 
+use async_trait::async_trait;
 use redis::{from_redis_value, RedisError, ToRedisArgs};
 
 use crate::gateway::interface::{nature_remo::NatureRemo, redis::Redis};
@@ -22,7 +23,8 @@ impl <N: NatureRemo, R: Redis> AmbientConditionRepository<N, R> {
     }
 }
 
-impl<N: NatureRemo, R: Redis> AmbientCondition
+#[async_trait]
+impl<N: NatureRemo + Sync + Send, R: Redis + Sync + Send> AmbientCondition
     for AmbientConditionRepository<N, R>
 {
     async fn fetch_current_ambient_condition(
@@ -34,7 +36,7 @@ impl<N: NatureRemo, R: Redis> AmbientCondition
     async fn save_ambient_condition(
         &mut self,
         ambient_condition: AmbientConditionModel,
-    ) -> Result<redis::Value, impl Error> {
+    ) -> Result<redis::Value, RedisError> {
         let key = "ambient_condition";
         let id = "*";
         let items = vec![

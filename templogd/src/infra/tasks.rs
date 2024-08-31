@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
+use common::infra::null_nature_remo_client::NullNatureRemoClient;
+use common::infra::{async_redis_client, null_redis_client};
 use tracing::instrument;
 
 use common;
 use crate::config::Config;
 use crate::controller;
 use common::gateway::ambient_condition::AmbientConditionRepository;
-use common::gateway::nature_remo_client::NatureRemoClient;
-use crate::infra;
+use common::infra::nature_remo_client::NatureRemoClient;
 
 #[instrument]
 pub async fn run(config: Arc<Config>) {
@@ -22,33 +23,32 @@ pub async fn run(config: Arc<Config>) {
             "https://api.nature.global".to_string(),
             cloned_config.get_device_id().to_string(),
         );
+        let redis_client = null_redis_client::NullRedisClient::new().await;
+        let ambient_condition = AmbientConditionRepository::new(nature_remo_client, redis_client);
         controller::log_temp::run(
             cloned_config,
-            AmbientConditionRepository::DataSource::<
-                NatureRemoClient<infra::http_client::ReqwestClient>,
-                common::infra::redis_client::AsyncRedisCrateClient,
-            >(nature_remo_client),
+            ambient_condition,
             tx,
-        )
-        .await;
+        ).await;
     });
 
     let another_cloned_config = config.clone();
     let task_which_logs_to_redis = tokio::spawn(async move {
-        let redis_host = another_cloned_config.get_redis_host();
-        let redis_port = another_cloned_config.get_redis_port();
-        let address = format!("redis://{}:{}", redis_host, redis_port);
-        let client = common::infra::redis_client::AsyncRedisCrateClient::new(&address).await;
+        let nature_remo_client = NullNatureRemoClient::new();
+        let redis_client = async_redis_client::AsyncRedisCrateClient::new(
+            &format!(
+                "redis://{}:{}",
+                another_cloned_config.get_redis_host(),
+                another_cloned_config.get_redis_port()
+            ),
+        ).await;
+        let ambient_condition = AmbientConditionRepository::new(nature_remo_client, redis_client);
 
         controller::log_to_redis::run(
             another_cloned_config,
-            AmbientConditionRepository::DataStore::<
-                NatureRemoClient<infra::http_client::ReqwestClient>,
-                common::infra::redis_client::AsyncRedisCrateClient,
-            >(client),
+            ambient_condition,
             rx,
-        )
-        .await;
+        ).await;
     });
 
     _ = tokio::join!(

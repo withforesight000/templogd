@@ -1,5 +1,6 @@
 use std::marker::{Send, Sync};
 
+use async_trait::async_trait;
 use redis::{aio::ConnectionManager, AsyncCommands, RedisError, ToRedisArgs, Value};
 
 pub struct AsyncRedisCrateClient {
@@ -14,6 +15,7 @@ impl AsyncRedisCrateClient {
     }
 }
 
+#[async_trait]
 impl crate::gateway::interface::redis::Redis for AsyncRedisCrateClient {
     async fn xadd(
         &mut self,

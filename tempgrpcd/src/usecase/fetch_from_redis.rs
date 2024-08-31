@@ -1,6 +1,6 @@
 use tracing::instrument;
 
-use crate::model::repository::ambient_condition::AmbientCondition;
+use common::model::repository::ambient_condition::AmbientCondition;
 use common::model::channel::datastore_operation::DatastoreOperation;
 
 #[instrument(parent = None, skip(client))]

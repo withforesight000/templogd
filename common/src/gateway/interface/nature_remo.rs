@@ -1,7 +1,8 @@
+use async_trait::async_trait;
+
 use crate::model::ambient_condition::AmbientCondition as AmbientConditionModel;
 
-use serde_json;
-
+#[async_trait]
 pub trait NatureRemo {
     // get devices from Nature Remo API
     // async fn get_devices(&self) -> Result<serde_json::Value, Box<dyn std::error::Error>>;

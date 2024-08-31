@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt::{self, Debug, Formatter};
 
+use async_trait::async_trait;
 use serde_json::Value;
 use tracing::{debug, info};
 
@@ -42,7 +43,8 @@ impl<T: HttpClient> NatureRemoClient<T> {
     }
 }
 
-impl<T: HttpClient> NatureRemo for NatureRemoClient<T> {
+#[async_trait]
+impl<T: HttpClient + Sync> NatureRemo for NatureRemoClient<T> {
     async fn fetch_ambient_condition(
         &self,
     ) -> Result<AmbientConditionModel, Box<dyn Error>> {

@@ -4,7 +4,7 @@ use tracing::{info, instrument};
 
 use crate::config::Config;
 use common::model::channel::datastore_operation::DatastoreOperation;
-use crate::model::repository::ambient_condition::AmbientCondition;
+use common::model::repository::ambient_condition::AmbientCondition;
 
 #[instrument(parent = None, skip(client))]
 pub async fn run(
@@ -13,7 +13,7 @@ pub async fn run(
     tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
 ) {
     loop {
-        let condition = client.fetch_ambient_condition().await.unwrap();
+        let condition = client.fetch_current_ambient_condition().await.unwrap();
         info!(
             "Temperature: {}, Humidity: {}, Illumination: {}",
             condition.get_temperature(),

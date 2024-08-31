@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde_json::Value;
 
@@ -42,6 +43,7 @@ impl ReqwestClient {
     }
 }
 
+#[async_trait]
 impl HttpClient for ReqwestClient {
     async fn get_with_bearer_token(
         &self,

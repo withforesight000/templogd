@@ -1,7 +1,9 @@
 use std::marker::{Send, Sync};
 
+use async_trait::async_trait;
 use redis::{RedisError, ToRedisArgs};
 
+#[async_trait]
 pub trait Redis {
     async fn xadd(
         &mut self,

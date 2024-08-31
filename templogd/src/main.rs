@@ -3,9 +3,7 @@ use tracing::info;
 
 mod config;
 mod controller;
-mod gateway;
 mod infra;
-mod model;
 mod usecase;
 // static PROCESS_NAME: &str = "templogd";
 

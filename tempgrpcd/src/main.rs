@@ -1,7 +1,5 @@
 mod controller;
-mod gateway;
 mod infra;
-mod model;
 mod pb;
 mod usecase;
 

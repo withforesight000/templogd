@@ -4,7 +4,7 @@ use tracing::instrument;
 
 use crate::config::Config;
 use common::model::channel::datastore_operation::DatastoreOperation;
-use crate::model::repository::ambient_condition::AmbientCondition;
+use common::model::repository::ambient_condition::AmbientCondition;
 use crate::usecase;
 
 #[instrument(parent = None, skip(client))]

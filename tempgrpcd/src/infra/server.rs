@@ -1,4 +1,4 @@
-use common::model::ambient_condition::AmbientCondition;
+use common::infra::null_nature_remo_client::NullNatureRemoClient;
 use tonic::transport::Server;
 use tonic_reflection::server::Builder;
 use tracing::info;
@@ -17,9 +17,9 @@ pub async fn run() {
     info!("GreeterServer listening on {}", addr);
 
     let _task_which_fetches_from_redis = tokio::spawn(async move {
-        let address = format!("redis://{}:{}", "redis", 6379);
-        let client = common::infra::redis_client::AsyncRedisCrateClient::new(&address).await;
-        let ambient_repository_repo = crate::gateway::ambient_condition::AmbientConditionRepository::new(client);
+        let nature_remo_client = NullNatureRemoClient::new();
+        let client = common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!("redis://{}:{}", "redis", 6379)).await;
+        let ambient_repository_repo = common::gateway::ambient_condition::AmbientConditionRepository::new(nature_remo_client,client);
         controller::fetch_from_redis::run(ambient_repository_repo, rx).await
     });
 
@@ -30,7 +30,7 @@ pub async fn run() {
                 .register_encoded_file_descriptor_set(tonic::include_file_descriptor_set!(
                     "tempgrpcd"
                 ))
-                .build()
+                .build_v1()
                 .unwrap(),
         )
         .serve(addr)
