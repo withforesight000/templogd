@@ -7,6 +7,13 @@ use crate::model::ambient_condition::AmbientCondition as AmbientConditionModel;
 #[derive(Debug)]
 pub struct NullNatureRemoClient {}
 
+
+impl Default for NullNatureRemoClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NullNatureRemoClient {
     pub fn new() -> Self {
         Self {}

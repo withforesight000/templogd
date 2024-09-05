@@ -16,6 +16,12 @@ pub struct ReqwestClient {
     client: reqwest::Client,
 }
 
+impl Default for ReqwestClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReqwestClient {
     pub fn new() -> ReqwestClient {
         ReqwestClient {
