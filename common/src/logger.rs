@@ -4,7 +4,7 @@ use chrono::Local;
 use nix::unistd::isatty;
 use syslog::{Formatter3164, LoggerBackend};
 
-pub trait Logger: Send{
+pub trait Logger: Send {
     fn info(&mut self, message: &str);
     fn error(&mut self, message: &str);
 }
@@ -12,7 +12,7 @@ pub trait Logger: Send{
 pub enum LoggerType {
     AUTO,
     STDOUT,
-    SYSLOG
+    SYSLOG,
 }
 
 fn has_controlling_terminal() -> bool {
@@ -27,7 +27,7 @@ pub fn new(logger_type: LoggerType) -> Box<dyn Logger> {
             } else {
                 Box::new(SyslogLogger::new()) as Box<dyn Logger>
             }
-        },
+        }
         LoggerType::STDOUT => Box::new(StdOutLogger::new()) as Box<dyn Logger>,
         LoggerType::SYSLOG => Box::new(SyslogLogger::new()) as Box<dyn Logger>,
     }
@@ -51,9 +51,7 @@ impl SyslogLogger {
 
 impl Logger for SyslogLogger {
     fn info(&mut self, message: &str) {
-        self.writer
-            .info(message)
-            .expect("could not write to syslog");
+        self.writer.info(message).expect("could not write to syslog");
     }
 
     fn error(&mut self, message: &str) {

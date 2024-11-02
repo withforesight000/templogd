@@ -1,7 +1,7 @@
 use common::model::channel::datastore_operation::DatastoreOperation;
-use tracing::{info, instrument};
 use std::collections::HashMap;
 use tonic::{Request, Response, Status};
+use tracing::{info, instrument};
 
 use crate::pb::{
     self,

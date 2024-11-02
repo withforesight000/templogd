@@ -1,4 +1,7 @@
-use tokio::signal::{self, unix::{signal, SignalKind}};
+use tokio::signal::{
+    self,
+    unix::{signal, SignalKind},
+};
 use tokio_util::sync::CancellationToken;
 use tonic::{transport::Server, Request, Status};
 use tonic_reflection::server::Builder;
@@ -28,9 +31,17 @@ pub async fn run() {
     let cancellation_token_for_task_which_fetches_from_redis = cancellation_token.clone();
     let _task_which_fetches_from_redis = tokio::spawn(async move {
         let nature_remo_client = NullNatureRemoClient::new();
-        let client = common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!("redis://{}:{}", "redis", 6379)).await;
-        let ambient_repository_repo = common::gateway::ambient_condition::AmbientConditionRepository::new(nature_remo_client,client);
-        controller::fetch_from_redis::run(ambient_repository_repo, rx, cancellation_token_for_task_which_fetches_from_redis).await
+        let client =
+            common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!("redis://{}:{}", "redis", 6379))
+                .await;
+        let ambient_repository_repo =
+            common::gateway::ambient_condition::AmbientConditionRepository::new(nature_remo_client, client);
+        controller::fetch_from_redis::run(
+            ambient_repository_repo,
+            rx,
+            cancellation_token_for_task_which_fetches_from_redis,
+        )
+        .await
     });
 
     let mut sigterm = signal(SignalKind::terminate()).expect("Failed to create signal");
@@ -54,12 +65,13 @@ pub async fn run() {
 
     let cancellation_token_for_grpc = cancellation_token.clone();
     let task_grpc_server = Server::builder()
-        .add_service(TempgrpcdServer::with_interceptor(ambient_condition_repository, logging_interceptor))
+        .add_service(TempgrpcdServer::with_interceptor(
+            ambient_condition_repository,
+            logging_interceptor,
+        ))
         .add_service(
             Builder::configure()
-                .register_encoded_file_descriptor_set(tonic::include_file_descriptor_set!(
-                    "tempgrpcd"
-                ))
+                .register_encoded_file_descriptor_set(tonic::include_file_descriptor_set!("tempgrpcd"))
                 .build_v1()
                 .unwrap(),
         )
@@ -76,5 +88,4 @@ pub async fn run() {
     }
 
     _ = tokio::join!(_task_which_fetches_from_redis);
-
 }

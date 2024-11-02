@@ -21,10 +21,7 @@ impl crate::gateway::interface::redis::Redis for AsyncRedisCrateClient {
         &mut self,
         key: &str,
         id: &str,
-        items: &[(
-            impl ToRedisArgs + Send + Sync,
-            impl ToRedisArgs + Send + Sync,
-        )],
+        items: &[(impl ToRedisArgs + Send + Sync, impl ToRedisArgs + Send + Sync)],
     ) -> Result<Value, RedisError> {
         self.connection.xadd(key, id, items).await
     }

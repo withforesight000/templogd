@@ -14,22 +14,18 @@ pub struct AmbientConditionRepository<N: NatureRemo, R: Redis> {
     redis_client: R,
 }
 
-impl <N: NatureRemo, R: Redis> AmbientConditionRepository<N, R> {
+impl<N: NatureRemo, R: Redis> AmbientConditionRepository<N, R> {
     pub fn new(nature_remo_client: N, redis_client: R) -> AmbientConditionRepository<N, R> {
         AmbientConditionRepository {
             nature_remo_client,
-            redis_client
+            redis_client,
         }
     }
 }
 
 #[async_trait]
-impl<N: NatureRemo + Sync + Send, R: Redis + Sync + Send> AmbientCondition
-    for AmbientConditionRepository<N, R>
-{
-    async fn fetch_current_ambient_condition(
-        &self,
-    ) -> Result<AmbientConditionModel, Box<dyn Error>> {
+impl<N: NatureRemo + Sync + Send, R: Redis + Sync + Send> AmbientCondition for AmbientConditionRepository<N, R> {
+    async fn fetch_current_ambient_condition(&self) -> Result<AmbientConditionModel, Box<dyn Error>> {
         self.nature_remo_client.fetch_ambient_condition().await
     }
 
@@ -51,10 +47,7 @@ impl<N: NatureRemo + Sync + Send, R: Redis + Sync + Send> AmbientCondition
         &mut self,
         start: impl ToRedisArgs + Send + Sync,
         end: impl ToRedisArgs + Send + Sync,
-    ) -> Result<
-        HashMap<String, AmbientConditionModel>,
-        RedisError,
-    > {
+    ) -> Result<HashMap<String, AmbientConditionModel>, RedisError> {
         let res: Result<redis::Value, RedisError> = self.redis_client.xrange("ambient_condition", start, end).await;
         match res {
             Ok(values) => {

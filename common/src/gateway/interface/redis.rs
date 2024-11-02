@@ -9,10 +9,7 @@ pub trait Redis {
         &mut self,
         key: &str,
         id: &str,
-        items: &[(
-            impl ToRedisArgs + Send + Sync,
-            impl ToRedisArgs + Send + Sync,
-        )],
+        items: &[(impl ToRedisArgs + Send + Sync, impl ToRedisArgs + Send + Sync)],
     ) -> Result<redis::Value, RedisError>;
 
     async fn xrange(

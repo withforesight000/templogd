@@ -12,9 +12,7 @@ pub struct Config {
 
 impl fmt::Debug for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Config")
-            .field("api_token", &"<MASKED>")
-            .finish()
+        f.debug_struct("Config").field("api_token", &"<MASKED>").finish()
     }
 }
 

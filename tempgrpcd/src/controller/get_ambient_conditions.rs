@@ -1,4 +1,3 @@
-
 use common::model::channel::datastore_operation::DatastoreOperation;
 use tonic::{Request, Response, Status};
 use tracing::instrument;

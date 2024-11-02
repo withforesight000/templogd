@@ -1,17 +1,22 @@
 use std::sync::Arc;
 
-use common::infra::{async_redis_client, null_redis_client};
 use common::infra::http_client::ReqwestClient;
 use common::infra::null_nature_remo_client::NullNatureRemoClient;
+use common::infra::{async_redis_client, null_redis_client};
+use common::model::channel::datastore_operation::DatastoreOperation;
 
-use tokio::signal::{self, unix::{signal, SignalKind}};
+use tokio::signal::{
+    self,
+    unix::{signal, SignalKind},
+};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};
 
-use common;
 use crate::config::Config;
 use crate::controller;
+use common;
 use common::gateway::ambient_condition::AmbientConditionRepository;
 use common::infra::nature_remo_client::NatureRemoClient;
 

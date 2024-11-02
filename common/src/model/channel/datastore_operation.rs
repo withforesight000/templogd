@@ -1,4 +1,3 @@
-
 use crate::model::ambient_condition::AmbientCondition;
 
 #[derive(Debug)]
