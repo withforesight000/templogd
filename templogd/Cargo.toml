@@ -16,3 +16,7 @@ tokio = { version = "1.39", features = ["full"] }
 tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+[dev-dependencies]
+async-trait = "0.1"
+mockall = { version = "0.13" }

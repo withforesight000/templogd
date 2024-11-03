@@ -47,3 +47,19 @@ impl Config {
         self.redis_port
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    impl Default for Config {
+        fn default() -> Self {
+            Config {
+                api_token: "".to_string(),
+                device_id: "".to_string(),
+                redis_host: "".to_string(),
+                redis_port: 0,
+            }
+        }
+    }
+}

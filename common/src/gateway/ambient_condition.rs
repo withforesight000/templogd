@@ -43,10 +43,13 @@ impl<N: NatureRemo + Sync + Send, R: Redis + Sync + Send> AmbientCondition for A
         self.redis_client.xadd(key, id, items.as_slice()).await
     }
 
-    async fn fetch_ambient_conditions_between_start_and_end(
+    async fn fetch_ambient_conditions_between_start_and_end<
+        T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static,
+        U: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static,
+    >(
         &mut self,
-        start: impl ToRedisArgs + Send + Sync,
-        end: impl ToRedisArgs + Send + Sync,
+        start: T,
+        end: U,
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError> {
         let res: Result<redis::Value, RedisError> = self.redis_client.xrange("ambient_condition", start, end).await;
         match res {

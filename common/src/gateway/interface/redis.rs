@@ -5,17 +5,17 @@ use redis::{RedisError, ToRedisArgs};
 
 #[async_trait]
 pub trait Redis {
-    async fn xadd(
+    async fn xadd<T: ToRedisArgs + Send + Sync + 'static, U: ToRedisArgs + Send + Sync + 'static>(
         &mut self,
         key: &str,
         id: &str,
-        items: &[(impl ToRedisArgs + Send + Sync, impl ToRedisArgs + Send + Sync)],
+        items: &[(T, U)],
     ) -> Result<redis::Value, RedisError>;
 
-    async fn xrange(
+    async fn xrange<T: ToRedisArgs + Send + Sync + 'static, U: ToRedisArgs + Send + Sync + 'static>(
         &mut self,
         key: &str,
-        start: impl ToRedisArgs + Send + Sync,
-        end: impl ToRedisArgs + Send + Sync,
+        start: T,
+        end: U,
     ) -> Result<redis::Value, RedisError>;
 }

@@ -17,20 +17,20 @@ impl AsyncRedisCrateClient {
 
 #[async_trait]
 impl crate::gateway::interface::redis::Redis for AsyncRedisCrateClient {
-    async fn xadd(
+    async fn xadd<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
         &mut self,
         key: &str,
         id: &str,
-        items: &[(impl ToRedisArgs + Send + Sync, impl ToRedisArgs + Send + Sync)],
+        items: &[(T, U)],
     ) -> Result<Value, RedisError> {
         self.connection.xadd(key, id, items).await
     }
 
-    async fn xrange(
+    async fn xrange<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
         &mut self,
         key: &str,
-        start: impl ToRedisArgs + Send + Sync,
-        end: impl ToRedisArgs + Send + Sync,
+        start: T,
+        end: U,
     ) -> Result<Value, RedisError> {
         self.connection.xrange(key, start, end).await
     }

@@ -13,20 +13,20 @@ impl NullRedisClient {
 
 #[async_trait]
 impl crate::gateway::interface::redis::Redis for NullRedisClient {
-    async fn xadd(
+    async fn xadd<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
         &mut self,
         _key: &str,
         _id: &str,
-        _items: &[(impl ToRedisArgs + Send + Sync, impl ToRedisArgs + Send + Sync)],
+        _items: &[(T, U)],
     ) -> Result<Value, RedisError> {
         panic!("BUGS: This should not be called: Not implemented");
     }
 
-    async fn xrange(
+    async fn xrange<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
         &mut self,
         _key: &str,
-        _start: impl ToRedisArgs + Send + Sync,
-        _end: impl ToRedisArgs + Send + Sync,
+        _start: T,
+        _end: U,
     ) -> Result<Value, RedisError> {
         panic!("BUGS: This should not be called: Not implemented");
     }

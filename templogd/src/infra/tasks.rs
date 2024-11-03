@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use common::infra::http_client::ReqwestClient;
-use common::infra::null_nature_remo_client::NullNatureRemoClient;
-use common::infra::{async_redis_client, null_redis_client};
+use common::gateway::interface::nature_remo::NatureRemo;
+use common::gateway::interface::redis::Redis;
+use common::infra::{AsyncRedisCrateClient, NatureRemoClient, NullNatureRemoClient, NullRedisClient, ReqwestClient};
 use common::model::channel::datastore_operation::DatastoreOperation;
 
 use tokio::signal::{
@@ -12,62 +12,38 @@ use tokio::signal::{
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, instrument};
+use tracing::{error, info, instrument};
 
 use crate::config::Config;
 use crate::controller;
-use common;
 use common::gateway::ambient_condition::AmbientConditionRepository;
-use common::infra::nature_remo_client::NatureRemoClient;
 
 #[instrument]
 pub async fn run(config: Arc<Config>) {
     let cancellation_token = CancellationToken::new();
 
     let (tx, rx) = mpsc::channel(32);
+
     // A task that logs the temperature every 30 seconds to the console
-    // TODO: logs to the Redis
-    let cloned_config = config.clone();
-    let cancellation_token_for_task_which_accesses_to_nature_remo_api = cancellation_token.clone();
-    let task_which_accesses_to_nature_remo_api = tokio::spawn(async move {
-        let nature_remo_client = NatureRemoClient::new(
-            ReqwestClient::new(),
-            cloned_config.get_api_token().to_string(),
-            "https://api.nature.global".to_string(),
-            cloned_config.get_device_id().to_string(),
-        );
-        let redis_client = null_redis_client::NullRedisClient::new().await;
-        let ambient_condition = AmbientConditionRepository::new(nature_remo_client, redis_client);
-        controller::log_temp::run(
-            cloned_config,
-            ambient_condition,
-            tx,
-            cancellation_token_for_task_which_accesses_to_nature_remo_api
-        ).await;
-    });
+    let nature_remo_client = NatureRemoClient::new(
+        ReqwestClient::new(),
+        config.get_api_token().to_string(),
+        "https://api.nature.global".to_string(),
+        config.get_device_id().to_string(),
+    );
 
-    let another_cloned_config = config.clone();
-    let cancellation_token_for_task_which_logs_to_redis = cancellation_token.clone();
-    let task_which_logs_to_redis = tokio::spawn(async move {
-        let nature_remo_client = NullNatureRemoClient::new();
-        let redis_client = async_redis_client::AsyncRedisCrateClient::new(
-            &format!(
-                "redis://{}:{}",
-                another_cloned_config.get_redis_host(),
-                another_cloned_config.get_redis_port()
-            ),
-        ).await;
-        let ambient_condition = AmbientConditionRepository::new(nature_remo_client, redis_client);
+    let redis_client = NullRedisClient::new().await;
+    let nature_remo_api_task = start_nature_remo_api_task(
+        config.clone(),
+        cancellation_token.clone(),
+        tx,
+        nature_remo_client,
+        redis_client,
+    );
 
-        controller::log_to_redis::run(
-            another_cloned_config,
-            ambient_condition,
-            rx,
-            cancellation_token_for_task_which_logs_to_redis
-        ).await;
-    });
+    let redis_task = start_redis_task(config.clone(), cancellation_token.clone(), rx);
 
-    let mut sigterm = signal(SignalKind::terminate()).expect("Failed to create signal");
+    let mut sigterm = signal(SignalKind::terminate()).expect("Failed to create SIGTERM signal listener");
     tokio::select! {
         _ = signal::ctrl_c() => {
             info!("SIGINT received");
@@ -79,8 +55,155 @@ pub async fn run(config: Arc<Config>) {
         }
     }
 
-    _ = tokio::join!(
-        task_which_accesses_to_nature_remo_api,
-        task_which_logs_to_redis
-    );
+    match tokio::try_join!(nature_remo_api_task, redis_task) {
+        Ok(_) => info!("All tasks completed successfully"),
+        Err(e) => {
+            error!("One of the tasks failed: {:?}", e);
+            cancellation_token.cancel();
+        }
+    }
 }
+
+fn start_nature_remo_api_task<N: NatureRemo, R: Redis>(
+    config: Arc<Config>,
+    cancellation_token: CancellationToken,
+    tx: mpsc::Sender<DatastoreOperation>,
+    nature_remo_client: N,
+    redis_client: R,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let ambient_condition = AmbientConditionRepository::new(nature_remo_client, redis_client);
+        controller::log_temp::run(config, ambient_condition, tx, cancellation_token).await;
+    })
+}
+
+fn start_redis_task(
+    config: Arc<Config>,
+    cancellation_token: CancellationToken,
+    rx: mpsc::Receiver<DatastoreOperation>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let nature_remo_client = NullNatureRemoClient::new();
+        #[cfg(not(test))]
+        let redis_client = AsyncRedisCrateClient::new(&format!(
+            "redis://{}:{}",
+            config.get_redis_host(),
+            config.get_redis_port()
+        ))
+        .await;
+        #[cfg(test)]
+        let redis_client = AsyncRedisCrateClient::new().await;
+
+        let ambient_condition = AmbientConditionRepository::new(nature_remo_client, redis_client);
+        controller::log_to_redis::run(config, ambient_condition, rx, cancellation_token).await;
+    })
+}
+
+// #codebase Can you write unit test code here?
+// Please write tests that verify the behavior of private methods indirectly by testing the public methods that call
+// them. Do not directly test or mock private methods. Instead, ensure that the public methods exercise all relevant
+// branches and logic of the private methods during testing.
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use common::model::repository::ambient_condition::AmbientCondition;
+//     use mockall::predicate::*;
+//     use mockall::*;
+//     use std::sync::Arc;
+//     use std::error::Error;
+//     use tokio::sync::mpsc;
+//     use tokio::time::{sleep, Duration};
+//     use tokio_util::sync::CancellationToken;
+
+//     #[tokio::test]
+//     async fn test_run() {
+//         // Arrange
+//         let config = Arc::new(Config::default());
+
+//         common::infra::
+
+//         // Create a cancellation token that we can control in the test
+//         let cancellation_token = CancellationToken::new();
+
+//         // We need to override the signal handling to trigger cancellation in the test
+//         let (tx_signal, mut rx_signal) = mpsc::channel(1);
+
+//         // Spawn the run function in a task
+//         let run_handle = {
+//             let config = config.clone();
+//             let cancellation_token = cancellation_token.clone();
+
+//             tokio::spawn(async move {
+//                 // Simulate the signal handling
+//                 tokio::select! {
+//                     _ = rx_signal.recv() => {
+//                         cancellation_token.cancel();
+//                     }
+//                 }
+
+//                 // Call the actual run function
+//                 super::run(config).await;
+//             })
+//         };
+
+//         // Act
+//         // Simulate sending a signal after some time
+//         sleep(Duration::from_millis(100)).await;
+//         tx_signal.send(()).await.unwrap();
+
+//         // Wait for the run function to complete
+//         let _ = run_handle.await;
+
+//         // Assert
+//         // If the run function completes without errors, the test passes
+//         // You can add more assertions here to verify specific behaviors
+//     }
+
+//     #[tokio::test]
+//     async fn test_start_nature_remo_api_task() {
+//         // Arrange
+//         let config = Arc::new(Config::default());
+//         let cancellation_token = CancellationToken::new();
+//         let (tx, mut rx) = mpsc::channel(32);
+
+//         // Act
+//         let handle = super::start_nature_remo_api_task(config.clone(), cancellation_token.clone(), tx);
+
+//         // Cancel the token after some time to simulate shutdown
+//         sleep(Duration::from_millis(100)).await;
+//         cancellation_token.cancel();
+
+//         // Wait for the task to complete
+//         handle.await.unwrap();
+
+//         // Assert
+//         // Check that messages were sent over the channel
+//         while let Some(_operation) = rx.recv().await {
+//             // You can add assertions on the operations received
+//         }
+//     }
+
+//     #[tokio::test]
+//     async fn test_start_redis_task() {
+//         // Arrange
+//         let config = Arc::new(Config::default());
+//         let cancellation_token = CancellationToken::new();
+//         let (tx, rx) = mpsc::channel(32);
+
+//         // Act
+//         let handle = super::start_redis_task(config.clone(), cancellation_token.clone(), rx);
+
+//         // Simulate sending some operations
+//         tx.send(DatastoreOperation::default()).await.unwrap();
+
+//         // Cancel the token after some time to simulate shutdown
+//         sleep(Duration::from_millis(100)).await;
+//         cancellation_token.cancel();
+
+//         // Wait for the task to complete
+//         handle.await.unwrap();
+
+//         // Assert
+//         // Since we don't have access to the internal state, we assume success if no errors occur
+//     }
+// }

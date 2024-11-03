@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use mockall::automock;
 
 use crate::gateway::interface::nature_remo::NatureRemo;
 use crate::model::ambient_condition::AmbientCondition as AmbientConditionModel;
@@ -18,6 +19,7 @@ impl NullNatureRemoClient {
     }
 }
 
+#[automock]
 #[async_trait]
 impl NatureRemo for NullNatureRemoClient {
     async fn fetch_ambient_condition(&self) -> Result<AmbientConditionModel, Box<dyn std::error::Error>> {

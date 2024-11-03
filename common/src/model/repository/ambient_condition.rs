@@ -13,10 +13,13 @@ pub trait AmbientCondition {
     async fn fetch_current_ambient_condition(&self) -> Result<AmbientConditionModel, Box<dyn Error>>;
 
     // fetch saved ambient conditions from redis
-    async fn fetch_ambient_conditions_between_start_and_end(
+    async fn fetch_ambient_conditions_between_start_and_end<
+        T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static,
+        U: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static,
+    >(
         &mut self,
-        start: impl ToRedisArgs + std::marker::Send + std::marker::Sync,
-        end: impl ToRedisArgs + std::marker::Send + std::marker::Sync,
+        start: T,
+        end: U,
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError>;
 
     // save an ambient condition to redis
