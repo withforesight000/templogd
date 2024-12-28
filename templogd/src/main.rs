@@ -10,7 +10,7 @@ mod usecase;
 /// templogd
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
-struct Args {
+struct TemplogdArgs {
     /// API token for the Nature Remo API
     #[arg(long, required = true, env = "TEMPLOGD_NATURE_REMO_API_TOKEN")]
     api_token: String,
@@ -33,7 +33,7 @@ async fn main() {
     tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
     info!("starting templogd...");
 
-    let args = Args::parse();
+    let args = TemplogdArgs::parse();
     let config = config::new(args);
     info!("config loaded");
 

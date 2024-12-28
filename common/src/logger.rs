@@ -68,7 +68,7 @@ impl StdOutLogger {
 
     fn localtime() -> String {
         let now = Local::now();
-        return now.format("%Y-%m-%d %H:%M:%S%.3f %:z").to_string();
+        now.format("%Y-%m-%d %H:%M:%S%.3f %:z").to_string()
     }
 }
 

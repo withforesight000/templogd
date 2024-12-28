@@ -1,21 +1,21 @@
 use std::sync::Arc;
 
+use common::gateway::interface::nature_remo::NatureRemo;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};
 
 use crate::config::Config;
 use common::model::channel::datastore_operation::DatastoreOperation;
-use common::model::repository::ambient_condition::AmbientCondition;
 
 #[instrument(parent = None, skip(client))]
 pub async fn run(
     config: Arc<Config>,
-    client: impl AmbientCondition,
+    client: impl NatureRemo,
     tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
     loop {
-        let condition = client.fetch_current_ambient_condition().await.unwrap();
+        let condition = client.fetch_ambient_condition().await.unwrap();
         info!(
             "Temperature: {}, Humidity: {}, Illumination: {}",
             condition.get_temperature(),
