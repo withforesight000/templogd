@@ -1,11 +1,11 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::TemplogdArgs;
+use crate::TempgrpcdArgs;
 
 pub struct Config {
-    api_token: String,
-    device_id: String,
+    server_bind_address: String,
+    server_port: String,
     redis_host: String,
     redis_port: i32,
 }
@@ -16,27 +16,27 @@ impl fmt::Debug for Config {
     }
 }
 
-pub fn new(args: TemplogdArgs) -> Arc<Config> {
-    let api_token = args.api_token;
-    let device_id = args.device_id;
+pub fn new(args: TempgrpcdArgs) -> Arc<Config> {
+    let server_bind_address = args.server_bind_address;
+    let server_port = args.server_port;
     let redis_host = args.redis_host;
     let redis_port = args.redis_port;
 
     Arc::new(Config {
-        api_token,
-        device_id,
+        server_bind_address,
+        server_port,
         redis_host,
         redis_port,
     })
 }
 
 impl Config {
-    pub fn get_api_token(&self) -> &str {
-        &self.api_token
+    pub fn get_server_bind_address(&self) -> &str {
+        &self.server_bind_address
     }
 
-    pub fn get_device_id(&self) -> &str {
-        &self.device_id
+    pub fn get_server_port(&self) -> &str {
+        &self.server_port
     }
 
     pub fn get_redis_host(&self) -> &str {
@@ -55,8 +55,8 @@ mod tests {
     impl Default for Config {
         fn default() -> Self {
             Config {
-                api_token: "".to_string(),
-                device_id: "".to_string(),
+                server_bind_address: "".to_string(),
+                server_port: "".to_string(),
                 redis_host: "".to_string(),
                 redis_port: 0,
             }

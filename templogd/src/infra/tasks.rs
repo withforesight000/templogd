@@ -1,59 +1,35 @@
-use std::sync::Arc;
+use std::{future::Future, pin::Pin, sync::Arc};
 
-use common::gateway::interface::nature_remo::NatureRemo;
-use common::gateway::interface::redis::Redis;
-use common::infra::{AsyncRedisCrateClient, NatureRemoClient, NullNatureRemoClient, NullRedisClient, ReqwestClient};
-use common::model::channel::datastore_operation::DatastoreOperation;
-
-use tokio::signal::{
-    self,
-    unix::{signal, SignalKind},
-};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, instrument};
 
-use crate::config::Config;
-use crate::controller;
-use common::gateway::ambient_condition::AmbientConditionRepository;
+use crate::{config::Config, controller};
+use common::gateway::interface::nature_remo::NatureRemo;
+use common::infra::{
+    async_redis_client::AsyncRedisCrateClient, http_client::ReqwestClient, nature_remo_client::NatureRemoClient,
+};
+use common::model::channel::datastore_operation::DatastoreOperation;
 
 #[instrument]
 pub async fn run(config: Arc<Config>) {
     let cancellation_token = CancellationToken::new();
-
     let (tx, rx) = mpsc::channel(32);
 
     // A task that logs the temperature every 30 seconds to the console
-    let nature_remo_client = NatureRemoClient::new(
-        ReqwestClient::new(),
-        config.get_api_token().to_string(),
-        "https://api.nature.global".to_string(),
-        config.get_device_id().to_string(),
-    );
+    let nature_remo_client_factory = make_nature_remo_client_factory(config.clone());
+    let redis_client_factory = make_redis_client_factory(config.clone());
 
-    let redis_client = NullRedisClient::new().await;
+    let redis_task = start_redis_task(config.clone(), cancellation_token.clone(), rx, redis_client_factory);
     let nature_remo_api_task = start_nature_remo_api_task(
         config.clone(),
         cancellation_token.clone(),
         tx,
-        nature_remo_client,
-        redis_client,
+        nature_remo_client_factory,
     );
 
-    let redis_task = start_redis_task(config.clone(), cancellation_token.clone(), rx);
-
-    let mut sigterm = signal(SignalKind::terminate()).expect("Failed to create SIGTERM signal listener");
-    tokio::select! {
-        _ = signal::ctrl_c() => {
-            info!("SIGINT received");
-            cancellation_token.cancel();
-        },
-        _ = sigterm.recv() => {
-            info!("SIGTERM received");
-            cancellation_token.cancel();
-        }
-    }
+    make_signal_handlers(cancellation_token.clone()).await;
 
     match tokio::try_join!(nature_remo_api_task, redis_task) {
         Ok(_) => info!("All tasks completed successfully"),
@@ -64,39 +40,78 @@ pub async fn run(config: Arc<Config>) {
     }
 }
 
-fn start_nature_remo_api_task<N: NatureRemo, R: Redis>(
-    config: Arc<Config>,
-    cancellation_token: CancellationToken,
-    tx: mpsc::Sender<DatastoreOperation>,
-    nature_remo_client: N,
-    redis_client: R,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let ambient_condition = AmbientConditionRepository::new(nature_remo_client, redis_client);
-        controller::log_temp::run(config, ambient_condition, tx, cancellation_token).await;
-    })
+fn make_nature_remo_client_factory(config: Arc<Config>) -> impl Fn() -> NatureRemoClient<ReqwestClient> {
+    move || {
+        NatureRemoClient::new(
+            ReqwestClient::new(),
+            config.get_api_token().to_string(),
+            "https://api.nature.global".to_string(),
+            config.get_device_id().to_string(),
+        )
+    }
 }
 
-fn start_redis_task(
+fn make_redis_client_factory(
     config: Arc<Config>,
-    cancellation_token: CancellationToken,
-    rx: mpsc::Receiver<DatastoreOperation>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let nature_remo_client = NullNatureRemoClient::new();
-        #[cfg(not(test))]
-        let redis_client = AsyncRedisCrateClient::new(&format!(
+) -> impl Fn() -> Pin<Box<dyn Future<Output = AsyncRedisCrateClient> + Send>> {
+    fn redis_client(url: String) -> Pin<Box<dyn Future<Output = AsyncRedisCrateClient> + Send>> {
+        Box::pin(async move { AsyncRedisCrateClient::new(&url).await })
+    }
+
+    move || {
+        redis_client(format!(
             "redis://{}:{}",
             config.get_redis_host(),
             config.get_redis_port()
         ))
-        .await;
-        #[cfg(test)]
-        let redis_client = AsyncRedisCrateClient::new().await;
+    }
+}
 
-        let ambient_condition = AmbientConditionRepository::new(nature_remo_client, redis_client);
-        controller::log_to_redis::run(config, ambient_condition, rx, cancellation_token).await;
+fn start_nature_remo_api_task<R, T>(
+    config: Arc<Config>,
+    cancellation_token: CancellationToken,
+    tx: mpsc::Sender<DatastoreOperation>,
+    nature_remo_client: R,
+) -> JoinHandle<()>
+where
+    R: FnOnce() -> T + Send + 'static,
+    T: NatureRemo + Send + 'static, // 具体的な型を指定
+{
+    tokio::spawn(async move {
+        let client = nature_remo_client();
+        controller::log_temp::run(config, client, tx, cancellation_token).await;
     })
+}
+
+fn start_redis_task<F>(
+    config: Arc<Config>,
+    cancellation_token: CancellationToken,
+    rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
+    redis_client: F,
+) -> JoinHandle<()>
+where
+    F: FnOnce() -> Pin<Box<dyn Future<Output = AsyncRedisCrateClient> + Send>> + Send + 'static,
+{
+    tokio::spawn(async move {
+        let client = redis_client().await;
+        controller::log_to_redis::run(config, client, rx, cancellation_token).await;
+    })
+}
+
+async fn make_signal_handlers(cancellation_token: CancellationToken) {
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("Failed to create SIGTERM signal listener");
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("SIGINT received");
+            cancellation_token.cancel();
+        },
+        _ = sigterm.recv() => {
+            info!("SIGTERM received");
+            cancellation_token.cancel();
+        }
+    }
 }
 
 // #codebase Can you write unit test code here?

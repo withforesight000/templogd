@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
+use common::gateway::interface::nature_remo::NatureRemo;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
 use crate::config::Config;
 use crate::usecase;
 use common::model::channel::datastore_operation::DatastoreOperation;
-use common::model::repository::ambient_condition::AmbientCondition;
 
 #[instrument(parent = None, skip(client))]
 pub async fn run(
     config: Arc<Config>,
-    client: impl AmbientCondition,
+    client: impl NatureRemo,
     tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {

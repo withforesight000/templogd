@@ -7,8 +7,8 @@ services:
       target: templogd
     restart: always
     environment:
-      - TEMPLOGD_NATURE_REMO_API_TOKEN=XXX
-      - TEMPLOGD_NATURE_REMO_DEVICE_ID=YYY
+      - TEMPLOGD_NATURE_REMO_API_TOKEN=PMXfW2Pb1McVWkQtBtcC81DAAVM0sKRN4kT-3olguyQ.GOCYrX-iqTZotgreNnIZ12Q3zoqMi8rmHn1K6RTU2H8
+      - TEMPLOGD_NATURE_REMO_DEVICE_ID=0ee31079-1b6e-424e-9f89-6aeff78077fc
       - TEMPLOGD_REDIS_HOST=redis
       - TEMPLOGD_REDIS_PORT=6379
 
@@ -19,6 +19,8 @@ services:
       target: tempgrpcd
     restart: always
     environment:
+      - TEMPGRPCD_SERVER_BIND_ADDRESS=0.0.0.0
+      - TEMPGRPCD_SERVER_PORT=50051
       - TEMPGRPCD_REDIS_HOST=redis
       - TEMPGRPCD_REDIS_PORT=6379
       - RUST_BACKTRACE=1
