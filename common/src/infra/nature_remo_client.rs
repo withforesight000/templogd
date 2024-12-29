@@ -3,7 +3,8 @@ use std::fmt::{self, Debug, Formatter};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tracing::{debug, info};
+use scopeguard::defer;
+use tracing::{debug, info, instrument};
 
 use crate::gateway::interface::{http_client::HttpClient, nature_remo::NatureRemo};
 use crate::model::ambient_condition::{self, AmbientCondition as AmbientConditionModel};
@@ -26,7 +27,11 @@ impl<T: HttpClient + Debug> Debug for NatureRemoClient<T> {
 }
 
 impl<T: HttpClient> NatureRemoClient<T> {
+    #[instrument(parent = None, skip(http_client))]
     pub fn new(http_client: T, api_token: String, base_address: String, device_id: String) -> NatureRemoClient<T> {
+        info!("Started");
+        defer! {info!("Ended")}
+
         NatureRemoClient {
             http_client,
             api_token,
@@ -35,7 +40,11 @@ impl<T: HttpClient> NatureRemoClient<T> {
         }
     }
 
-    async fn get_devices(&self) -> Result<Value, Box<dyn Error>> {
+    #[instrument(parent = None, skip(self))]
+    async fn get_devices(&self) -> Result<Value, Box<dyn Error + Send>> {
+        debug!("Started");
+        defer! {debug!("Ended")}
+
         let url = format!("{}/1/devices", self.base_address);
         self.http_client.get_with_bearer_token(&url, self.api_token.as_str()).await
     }
@@ -43,7 +52,11 @@ impl<T: HttpClient> NatureRemoClient<T> {
 
 #[async_trait]
 impl<T: HttpClient + Sync> NatureRemo for NatureRemoClient<T> {
-    async fn fetch_ambient_condition(&self) -> Result<AmbientConditionModel, Box<dyn Error>> {
+    #[instrument(parent = None, skip(self))]
+    async fn fetch_ambient_condition(&self) -> Result<AmbientConditionModel, Box<dyn Error + Send>> {
+        debug!("Started");
+        defer! {debug!("Ended")}
+
         let devices = self.get_devices().await;
         // info!("Devices: {:?}", devices);
 

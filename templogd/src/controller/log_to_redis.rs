@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use common::gateway::interface::redis::Redis;
+use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
-use tracing::instrument;
+use tracing::{info, instrument};
 
 use crate::config::Config;
 use crate::usecase;
@@ -15,5 +16,8 @@ pub async fn run(
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
+    info!("Started");
+    defer! {info!("Ended")}
+
     usecase::log_to_redis::run(config, client, rx, cancellation_token).await;
 }

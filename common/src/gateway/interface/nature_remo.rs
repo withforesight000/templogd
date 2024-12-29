@@ -8,5 +8,5 @@ pub trait NatureRemo {
     // async fn get_devices(&self) -> Result<serde_json::Value, Box<dyn std::error::Error>>;
 
     // fetch a current ambient condition from Nature Remo API
-    async fn fetch_ambient_condition(&self) -> Result<AmbientConditionModel, Box<dyn std::error::Error>>;
+    async fn fetch_ambient_condition(&self) -> Result<AmbientConditionModel, Box<dyn std::error::Error + Send>>;
 }

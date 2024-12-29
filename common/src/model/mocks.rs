@@ -14,7 +14,7 @@ mock! {
 
     #[async_trait::async_trait]
     impl NatureRemo for NatureRemoClient {
-        async fn fetch_ambient_condition(&self) -> Result<AmbientConditionModel, Box<dyn Error>>;
+        async fn fetch_ambient_condition(&self) -> Result<AmbientConditionModel, Box<dyn Error + Send>>;
     }
 }
 

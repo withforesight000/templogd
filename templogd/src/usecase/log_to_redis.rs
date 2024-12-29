@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use common::gateway::interface::redis::Redis;
+use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 use crate::config::Config;
 use common::model::channel::datastore_operation::DatastoreOperation;
@@ -14,18 +15,16 @@ pub async fn run(
     mut rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
+    info!("Started");
+    defer! {info!("Ended")}
+
     loop {
         tokio::select! {
             operation = rx.recv() => {
+                debug!("Received operation from log_temp task: {:?}", operation);
                 if let Some(operation) = operation {
                     match operation {
                         DatastoreOperation::SaveAmbientCondition { ambient_condition } => {
-                            // let items_ref: Vec<(&str, &str)> = items
-                            //     .iter()
-                            //     .map(|(k, v)| (k.as_str(), v.as_str()))
-                            //     .collect();
-                            // let items_slice: &[(&str, &str)] = items_ref.as_slice();
-
                             let key = "ambient_condition";
                             let id = "*";
                             let items = vec![
@@ -35,8 +34,7 @@ pub async fn run(
                             ];
 
                             let res = client.xadd(key, id, items.as_slice()).await;
-                            // let res = client.xadd(&key, &id, items_slice).await.unwrap();
-                            info!(":::Result from redis: {:?}", res)
+                            info!("Saved ambient condition to Redis: {:?}", res);
                         }
                         DatastoreOperation::FetchAmbientConditions { start: _, end: _, resp: _ } => {
                             panic!()

@@ -1,30 +1,27 @@
 use common::model::channel::datastore_operation::DatastoreOperation;
+use scopeguard::defer;
 use std::collections::HashMap;
 use tonic::{Request, Response, Status};
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 use crate::pb::{
     self,
     tempgrpcd::{TempgrpcdRequest, TempgrpcdResponse},
 };
 
-#[instrument]
+#[instrument(parent = None)]
 pub async fn get_ambient_conditions(
     request: Request<TempgrpcdRequest>,
     tx: &tokio::sync::mpsc::Sender<DatastoreOperation>,
 ) -> Result<Response<TempgrpcdResponse>, Status> {
+    debug!("Started");
+    defer! {debug!("Ended")}
+
     let tempgrpcd_request = request.into_inner();
     let start = tempgrpcd_request.start_time;
     let end = tempgrpcd_request.end_time;
 
-    // let ambient_conditions = data_store
-    //     .lock()
-    //     .await
-    //     .fetch_ambient_conditions_between_start_and_end(start, end)
-    //     .await
-    //     .unwrap();
     let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-    info!("start: {}, end: {}", start, end);
     tx.send(DatastoreOperation::FetchAmbientConditions {
         start: start.to_string(),
         end: end.to_string(),
@@ -32,6 +29,7 @@ pub async fn get_ambient_conditions(
     })
     .await
     .unwrap();
+    info!("sent FetchAmbientConditions to fetch_from_redis task");
 
     let ambient_conditions = resp_rx.await.unwrap().unwrap();
 
