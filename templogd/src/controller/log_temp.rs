@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use common::gateway::interface::nature_remo::NatureRemo;
+use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
-use tracing::instrument;
+use tracing::{info, instrument};
 
 use crate::config::Config;
 use crate::usecase;
@@ -15,5 +16,8 @@ pub async fn run(
     tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
+    info!("Started");
+    defer! {info!("Ended")}
+
     usecase::log_temp::run(config, client, tx, cancellation_token).await;
 }

@@ -1,9 +1,10 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
+use scopeguard::defer;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, instrument};
+use tracing::{debug, error, info, instrument};
 
 use crate::{config::Config, controller};
 use common::gateway::interface::nature_remo::NatureRemo;
@@ -12,8 +13,11 @@ use common::infra::{
 };
 use common::model::channel::datastore_operation::DatastoreOperation;
 
-#[instrument]
+#[instrument(parent = None)]
 pub async fn run(config: Arc<Config>) {
+    info!("Started");
+    defer! {info!("Ended")}
+
     let cancellation_token = CancellationToken::new();
     let (tx, rx) = mpsc::channel(32);
 
@@ -40,7 +44,11 @@ pub async fn run(config: Arc<Config>) {
     }
 }
 
+#[instrument(parent = None)]
 fn make_nature_remo_client_factory(config: Arc<Config>) -> impl Fn() -> NatureRemoClient<ReqwestClient> {
+    debug!("Started");
+    defer! {debug!("Ended")}
+
     move || {
         NatureRemoClient::new(
             ReqwestClient::new(),
@@ -51,9 +59,13 @@ fn make_nature_remo_client_factory(config: Arc<Config>) -> impl Fn() -> NatureRe
     }
 }
 
+#[instrument(parent = None)]
 fn make_redis_client_factory(
     config: Arc<Config>,
 ) -> impl Fn() -> Pin<Box<dyn Future<Output = AsyncRedisCrateClient> + Send>> {
+    debug!("Started");
+    defer! {debug!("Ended")}
+
     fn redis_client(url: String) -> Pin<Box<dyn Future<Output = AsyncRedisCrateClient> + Send>> {
         Box::pin(async move { AsyncRedisCrateClient::new(&url).await })
     }
@@ -67,6 +79,8 @@ fn make_redis_client_factory(
     }
 }
 
+// TODO: remove skip(nature_remo_client)
+#[instrument(parent = None, skip(nature_remo_client))]
 fn start_nature_remo_api_task<R, T>(
     config: Arc<Config>,
     cancellation_token: CancellationToken,
@@ -77,12 +91,17 @@ where
     R: FnOnce() -> T + Send + 'static,
     T: NatureRemo + Send + 'static, // 具体的な型を指定
 {
+    debug!("Started");
+    defer! {debug!("Ended")}
+
     tokio::spawn(async move {
         let client = nature_remo_client();
         controller::log_temp::run(config, client, tx, cancellation_token).await;
     })
 }
 
+// TODO: remove skip(redis_client)
+#[instrument(parent = None, skip(redis_client))]
 fn start_redis_task<F>(
     config: Arc<Config>,
     cancellation_token: CancellationToken,
@@ -92,13 +111,20 @@ fn start_redis_task<F>(
 where
     F: FnOnce() -> Pin<Box<dyn Future<Output = AsyncRedisCrateClient> + Send>> + Send + 'static,
 {
+    debug!("Started");
+    defer! {debug!("Ended")}
+
     tokio::spawn(async move {
         let client = redis_client().await;
         controller::log_to_redis::run(config, client, rx, cancellation_token).await;
     })
 }
 
+#[instrument(parent = None)]
 async fn make_signal_handlers(cancellation_token: CancellationToken) {
+    debug!("Started");
+    defer! {debug!("Ended")}
+
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("Failed to create SIGTERM signal listener");
 

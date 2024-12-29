@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
-use tokio::signal::{
-    self,
-    unix::{signal, SignalKind},
+use scopeguard::defer;
+use tokio::{
+    signal::{
+        self,
+        unix::{signal, SignalKind},
+    },
+    task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
 use tonic::{
@@ -10,7 +14,7 @@ use tonic::{
     Request, Status,
 };
 use tonic_reflection::server::Builder;
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 use crate::{
     config::Config,
@@ -24,8 +28,11 @@ fn logging_interceptor(req: Request<()>) -> Result<Request<()>, Status> {
     Ok(req)
 }
 
-#[instrument]
+#[instrument(parent = None)]
 pub async fn run(config: Arc<Config>) {
+    info!("Started");
+    defer! {info!("Ended")}
+
     let cancellation_token = CancellationToken::new();
     let (tx, rx) = tokio::sync::mpsc::channel(32);
 
@@ -52,12 +59,16 @@ pub async fn run(config: Arc<Config>) {
     _ = tokio::join!(redis_task);
 }
 
-async fn start_redis_task(
+#[instrument(parent = None)]
+fn start_redis_task(
     config: Arc<Config>,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
-) {
-    let _task_which_fetches_from_redis = tokio::spawn(async move {
+) -> JoinHandle<()> {
+    debug!("Started");
+    defer! {debug!("Ended")}
+
+    tokio::spawn(async move {
         let redis_client = common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!(
             "redis://{}:{}",
             config.get_redis_host(),
@@ -65,10 +76,14 @@ async fn start_redis_task(
         ))
         .await;
         controller::fetch_from_redis::run(redis_client, rx, cancellation_token).await
-    });
+    })
 }
 
+#[instrument(parent = None)]
 async fn start_signal_handler_task(cancellation_token: CancellationToken) {
+    debug!("Started");
+    defer! {debug!("Ended")}
+
     let mut sigterm = signal(SignalKind::terminate()).expect("Failed to create signal");
     tokio::spawn(async move {
         tokio::select! {
@@ -88,7 +103,11 @@ async fn start_signal_handler_task(cancellation_token: CancellationToken) {
     });
 }
 
+#[instrument(parent = None)]
 fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>) -> Router {
+    debug!("Started");
+    defer! {debug!("Ended")}
+
     let ambient_condition_repository = get_ambient_conditions::GetAmbientConditions::new(tx);
 
     Server::builder()
