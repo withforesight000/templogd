@@ -11,19 +11,23 @@ mod usecase;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct TempgrpcdArgs {
-    /// API token for the Nature Remo API
+    /// Server bind address
     #[arg(long, required = true, env = "TEMPGRPCD_SERVER_BIND_ADDRESS")]
     server_bind_address: String,
 
-    /// Device ID for the Nature Remo device
+    /// Server port
     #[arg(long, required = true, env = "TEMPGRPCD_SERVER_PORT")]
     server_port: String,
 
-    /// Device ID for the Nature Remo device
+    /// API bearer token
+    #[arg(long, required = true, env = "TEMPGRPCD_BEARER_TOKEN")]
+    bearer_token: String,
+
+    /// Redis host
     #[arg(long, required = true, env = "TEMPGRPCD_REDIS_HOST")]
     redis_host: String,
 
-    /// Device ID for the Nature Remo device
+    /// Redis port
     #[arg(long, default_value_t = 6379, env = "TEMPGRPCD_REDIS_PORT")]
     redis_port: i32,
 }
