@@ -10,8 +10,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tonic::{
-    transport::{server::Router, Server},
-    Request, Status,
+    metadata::MetadataValue, service::Interceptor, transport::{server::Router, Server}, Request, Status
 };
 use tonic_reflection::server::Builder;
 use tracing::{debug, info, instrument};
@@ -23,9 +22,21 @@ use crate::{
 };
 use common::model::channel::datastore_operation::DatastoreOperation;
 
-fn logging_interceptor(req: Request<()>) -> Result<Request<()>, Status> {
-    info!("Received a request: {:?}", req);
-    Ok(req)
+#[derive(Clone)]
+struct AuthInterceptor {
+    token: String,
+}
+
+impl Interceptor for AuthInterceptor {
+    fn call(&mut self, req: Request<()>) -> Result<Request<()>, Status> {
+        let correct_bearer_token = format!("Bearer {}", self.token);
+        let token: MetadataValue<_> = correct_bearer_token.parse().unwrap();
+
+        match req.metadata().get("authorization") {
+            Some(t) if token == t => Ok(req),
+            _ => Err(Status::unauthenticated("No valid auth token")),
+        }
+    }
 }
 
 #[instrument(parent = None)]
@@ -39,7 +50,7 @@ pub async fn run(config: Arc<Config>) {
     let redis_task = start_redis_task(config.clone(), rx, cancellation_token.clone());
     start_signal_handler_task(cancellation_token.clone()).await;
 
-    let grpc_server = start_grpc_server_task(tx);
+    let grpc_server = start_grpc_server_task(tx, config.clone());
     let addr = format!("{}:{}", config.get_server_bind_address(), config.get_server_port())
         .parse()
         .expect("Unable to parse socket address");
@@ -104,7 +115,7 @@ async fn start_signal_handler_task(cancellation_token: CancellationToken) {
 }
 
 #[instrument(parent = None)]
-fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>) -> Router {
+fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>, config: Arc<Config>) -> Router {
     debug!("Started");
     defer! {debug!("Ended")}
 
@@ -113,7 +124,7 @@ fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>) -> 
     Server::builder()
         .add_service(TempgrpcdServer::with_interceptor(
             ambient_condition_repository,
-            logging_interceptor,
+            AuthInterceptor { token: config.get_bearer_token().to_string() },
         ))
         .add_service(
             Builder::configure()
