@@ -1,4 +1,4 @@
-use std::{io, os::fd::AsRawFd};
+use std::io;
 
 use chrono::Local;
 use nix::unistd::isatty;
@@ -16,7 +16,7 @@ pub enum LoggerType {
 }
 
 fn has_controlling_terminal() -> bool {
-    isatty(io::stdout().as_raw_fd()).unwrap_or(false)
+    isatty(io::stdout()).unwrap_or(false)
 }
 
 pub fn new(logger_type: LoggerType) -> Box<dyn Logger> {
