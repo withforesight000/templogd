@@ -4,9 +4,9 @@ use ::redis::{RedisError, ToRedisArgs};
 use mockall::predicate::*;
 use mockall::*;
 
-use crate::gateway::interface::nature_remo::NatureRemo;
 use crate::model::ambient_condition::AmbientCondition as AmbientConditionModel;
 use crate::model::repository::ambient_condition::AmbientCondition;
+use crate::model::repository::nature_remo::NatureRemo;
 
 // Mock the NatureRemoClient
 mock! {

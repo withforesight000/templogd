@@ -2,12 +2,13 @@ use std::error::Error;
 use std::fmt::{self, Debug, Formatter};
 
 use async_trait::async_trait;
-use serde_json::Value;
 use scopeguard::defer;
+use serde_json::Value;
 use tracing::{debug, info, instrument};
 
-use crate::gateway::interface::{http_client::HttpClient, nature_remo::NatureRemo};
+use crate::gateway::interface::http_client::HttpClient;
 use crate::model::ambient_condition::{self, AmbientCondition as AmbientConditionModel};
+use crate::model::repository::nature_remo::NatureRemo;
 
 pub struct NatureRemoClient<T: HttpClient> {
     http_client: T,

@@ -1,5 +1,8 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
+use common::gateway::datastore::DataStore;
+use common::gateway::nature_remo_client::NatureRemoClient;
+use common::model::repository::nature_remo::NatureRemo;
 use scopeguard::defer;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -7,10 +10,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument};
 
 use crate::{config::Config, controller};
-use common::gateway::interface::nature_remo::NatureRemo;
-use common::infra::{
-    async_redis_client::AsyncRedisCrateClient, http_client::ReqwestClient, nature_remo_client::NatureRemoClient,
-};
+use common::infra::{async_redis_client::AsyncRedisCrateClient, http_client::ReqwestClient};
 use common::model::channel::datastore_operation::DatastoreOperation;
 
 #[instrument(parent = None)]
@@ -23,9 +23,9 @@ pub async fn run(config: Arc<Config>) {
 
     // A task that logs the temperature every 30 seconds to the console
     let nature_remo_client_factory = make_nature_remo_client_factory(config.clone());
-    let redis_client_factory = make_redis_client_factory(config.clone());
+    let datastore_factory = make_redis_client_factory(config.clone());
 
-    let redis_task = start_redis_task(config.clone(), cancellation_token.clone(), rx, redis_client_factory);
+    let datastore_task = start_datastore_task(config.clone(), cancellation_token.clone(), rx, datastore_factory);
     let nature_remo_api_task = start_nature_remo_api_task(
         config.clone(),
         cancellation_token.clone(),
@@ -35,7 +35,7 @@ pub async fn run(config: Arc<Config>) {
 
     make_signal_handlers(cancellation_token.clone()).await;
 
-    match tokio::try_join!(nature_remo_api_task, redis_task) {
+    match tokio::try_join!(nature_remo_api_task, datastore_task) {
         Ok(_) => info!("All tasks completed successfully"),
         Err(e) => {
             error!("One of the tasks failed: {:?}", e);
@@ -62,12 +62,12 @@ fn make_nature_remo_client_factory(config: Arc<Config>) -> impl Fn() -> NatureRe
 #[instrument(parent = None)]
 fn make_redis_client_factory(
     config: Arc<Config>,
-) -> impl Fn() -> Pin<Box<dyn Future<Output = AsyncRedisCrateClient> + Send>> {
+) -> impl Fn() -> Pin<Box<dyn Future<Output = DataStore<AsyncRedisCrateClient>> + Send>> {
     debug!("Started");
     defer! {debug!("Ended")}
 
-    fn redis_client(url: String) -> Pin<Box<dyn Future<Output = AsyncRedisCrateClient> + Send>> {
-        Box::pin(async move { AsyncRedisCrateClient::new(&url).await })
+    fn redis_client(url: String) -> Pin<Box<dyn Future<Output = DataStore<AsyncRedisCrateClient>> + Send>> {
+        Box::pin(async move { DataStore::new(AsyncRedisCrateClient::new(&url).await).await })
     }
 
     move || {
@@ -102,14 +102,14 @@ where
 
 // TODO: remove skip(redis_client)
 #[instrument(parent = None, skip(redis_client))]
-fn start_redis_task<F>(
+fn start_datastore_task<F>(
     config: Arc<Config>,
     cancellation_token: CancellationToken,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     redis_client: F,
 ) -> JoinHandle<()>
 where
-    F: FnOnce() -> Pin<Box<dyn Future<Output = AsyncRedisCrateClient> + Send>> + Send + 'static,
+    F: FnOnce() -> Pin<Box<dyn Future<Output = DataStore<AsyncRedisCrateClient>> + Send>> + Send + 'static,
 {
     debug!("Started");
     defer! {debug!("Ended")}

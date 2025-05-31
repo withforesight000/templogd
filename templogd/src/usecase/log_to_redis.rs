@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use common::gateway::interface::redis::Redis;
+use common::model::repository::datastore::DataStoreRepository;
 use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument};
@@ -11,7 +11,7 @@ use common::model::channel::datastore_operation::DatastoreOperation;
 #[instrument(parent = None, skip(client))]
 pub async fn run(
     _config: Arc<Config>,
-    mut client: impl Redis,
+    mut client: impl DataStoreRepository,
     mut rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
@@ -25,16 +25,7 @@ pub async fn run(
                 if let Some(operation) = operation {
                     match operation {
                         DatastoreOperation::SaveAmbientCondition { ambient_condition } => {
-                            let key = "ambient_condition";
-                            let id = "*";
-                            let items = vec![
-                                ("temperature", ambient_condition.get_temperature()),
-                                ("humidity", ambient_condition.get_humidity()),
-                                ("illumination", ambient_condition.get_illumination()),
-                            ];
-
-                            let res = client.xadd(key, id, items.as_slice()).await;
-                            info!("Saved ambient condition to Redis: {:?}", res);
+                            let _ =client.save_ambient_condition(ambient_condition).await;
                         }
                         DatastoreOperation::FetchAmbientConditions { start: _, end: _, resp: _ } => {
                             panic!()

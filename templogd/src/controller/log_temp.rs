@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use common::gateway::interface::nature_remo::NatureRemo;
+use common::model::repository::nature_remo::NatureRemo;
 use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};

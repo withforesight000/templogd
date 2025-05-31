@@ -10,7 +10,10 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tonic::{
-    metadata::MetadataValue, service::Interceptor, transport::{server::Router, Server}, Request, Status
+    metadata::MetadataValue,
+    service::Interceptor,
+    transport::{server::Router, Server},
+    Request, Status,
 };
 use tonic_reflection::server::Builder;
 use tracing::{debug, info, instrument};
@@ -20,7 +23,7 @@ use crate::{
     controller::{self, get_ambient_conditions},
     pb::tempgrpcd::tempgrpcd_server::TempgrpcdServer,
 };
-use common::model::channel::datastore_operation::DatastoreOperation;
+use common::{gateway::datastore::DataStore, model::channel::datastore_operation::DatastoreOperation};
 
 #[derive(Clone)]
 struct AuthInterceptor {
@@ -47,7 +50,7 @@ pub async fn run(config: Arc<Config>) {
     let cancellation_token = CancellationToken::new();
     let (tx, rx) = tokio::sync::mpsc::channel(32);
 
-    let redis_task = start_redis_task(config.clone(), rx, cancellation_token.clone());
+    let redis_task = start_datastore_task(config.clone(), rx, cancellation_token.clone());
     start_signal_handler_task(cancellation_token.clone()).await;
 
     let grpc_server = start_grpc_server_task(tx, config.clone());
@@ -71,7 +74,7 @@ pub async fn run(config: Arc<Config>) {
 }
 
 #[instrument(parent = None)]
-fn start_redis_task(
+fn start_datastore_task(
     config: Arc<Config>,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
@@ -80,13 +83,16 @@ fn start_redis_task(
     defer! {debug!("Ended")}
 
     tokio::spawn(async move {
-        let redis_client = common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!(
-            "redis://{}:{}",
-            config.get_redis_host(),
-            config.get_redis_port()
-        ))
+        let datastore_client = DataStore::new(
+            common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!(
+                "redis://{}:{}",
+                config.get_redis_host(),
+                config.get_redis_port()
+            ))
+            .await,
+        )
         .await;
-        controller::fetch_from_redis::run(redis_client, rx, cancellation_token).await
+        controller::fetch_from_redis::run(datastore_client, rx, cancellation_token).await
     })
 }
 
@@ -124,7 +130,9 @@ fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>, con
     Server::builder()
         .add_service(TempgrpcdServer::with_interceptor(
             ambient_condition_repository,
-            AuthInterceptor { token: config.get_bearer_token().to_string() },
+            AuthInterceptor {
+                token: config.get_bearer_token().to_string(),
+            },
         ))
         .add_service(
             Builder::configure()

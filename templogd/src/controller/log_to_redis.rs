@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use common::gateway::interface::redis::Redis;
+use common::model::repository::datastore::DataStoreRepository;
 use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};
@@ -12,7 +12,7 @@ use common::model::channel::datastore_operation::DatastoreOperation;
 #[instrument(parent = None, skip(client))]
 pub async fn run(
     config: Arc<Config>,
-    client: impl Redis,
+    client: impl DataStoreRepository,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
