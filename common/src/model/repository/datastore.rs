@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
 use async_trait::async_trait;
 use redis::{RedisError, ToRedisArgs};
@@ -8,7 +8,7 @@ use crate::model::ambient_condition::AmbientCondition as AmbientConditionModel;
 #[async_trait]
 pub trait DataStoreRepository {
     async fn fetch_ambient_conditions<
-        T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static,
+        T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + Debug,
     >(
         &mut self,
         start: T,
@@ -16,7 +16,7 @@ pub trait DataStoreRepository {
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError>;
 
     async fn fetch_ambient_conditions_with_sampling<
-        T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static,
+        T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + Debug,
     >(
         &mut self,
         start: T,

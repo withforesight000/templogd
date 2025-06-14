@@ -1,9 +1,12 @@
+use std::fmt::Debug;
 use std::marker::{Send, Sync};
 
 use async_trait::async_trait;
 use redis::{aio::ConnectionManager, cmd, AsyncCommands, RedisError, ToRedisArgs, Value};
 use scopeguard::defer;
 use tracing::{debug, info, instrument};
+
+use crate::gateway::interface::redis::Redis;
 
 pub struct AsyncRedisCrateClient {
     connection: ConnectionManager,
@@ -22,7 +25,7 @@ impl AsyncRedisCrateClient {
 }
 
 #[async_trait]
-impl crate::gateway::interface::redis::Redis for AsyncRedisCrateClient {
+impl Redis for AsyncRedisCrateClient {
     async fn fcall<K: ToRedisArgs + Send + Sync + 'static, A: ToRedisArgs + Send + Sync + 'static>(
         &mut self,
         function_name: &str,
@@ -85,5 +88,11 @@ impl crate::gateway::interface::redis::Redis for AsyncRedisCrateClient {
         end: U,
     ) -> Result<Value, RedisError> {
         self.connection.xrange(key, start, end).await
+    }
+}
+
+impl Debug for AsyncRedisCrateClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AsyncRedisCrateClient").field("connection", &"ConnectionManager").finish()
     }
 }
