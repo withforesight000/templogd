@@ -52,6 +52,7 @@ impl GetAmbientConditions for GetAmbientConditionsWithSamplingUC {
         info!("sent FetchAmbientConditions to fetch_from_redis task");
 
         let ambient_conditions = resp_rx.await.unwrap().unwrap();
+        debug!("Received ambient conditions with sampling: {:?}", ambient_conditions);
 
         Ok(Response::new(TempgrpcdResponse {
             version: 1,
