@@ -21,7 +21,7 @@ pub async fn run(
                 if let Some(operation) = operation {
                     match operation {
                         DatastoreOperation::FetchAmbientConditions { start, end, resp } => {
-                            let res = client.fetch_ambient_conditions_between_start_and_end(start, end).await;
+                            let res = client.fetch_ambient_conditions(start, end).await;
                             info!("Fetched ambient conditions from Redis: {:?}", res);
 
                             let result = resp.send(res);
@@ -29,6 +29,16 @@ pub async fn run(
                                     error!("Failed to send ambient conditions to get_ambient_conditions task: {:?}", e);
                             }
                             info!("Sent ambient conditions to get_ambient_conditions task");
+                        }
+                        DatastoreOperation::FetchAmbientConditionsWithSampling { start, end, sampling, resp } => {
+                            let res = client.fetch_ambient_conditions_with_sampling(start, end, sampling).await;
+                            info!("Fetched ambient conditions with sampling from Redis: {:?}", res);
+
+                            let result = resp.send(res);
+                            if let Err(e) = result {
+                                error!("Failed to send ambient conditions with sampling to get_ambient_conditions task: {:?}", e);
+                            }
+                            info!("Sent ambient conditions with sampling to get_ambient_conditions task");
                         }
                         DatastoreOperation::SaveAmbientCondition { ambient_condition: _ } => {
                             panic!()

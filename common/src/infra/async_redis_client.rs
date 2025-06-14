@@ -1,7 +1,7 @@
 use std::marker::{Send, Sync};
 
 use async_trait::async_trait;
-use redis::{aio::ConnectionManager, AsyncCommands, RedisError, ToRedisArgs, Value};
+use redis::{aio::ConnectionManager, cmd, AsyncCommands, RedisError, ToRedisArgs, Value};
 use scopeguard::defer;
 use tracing::{debug, info, instrument};
 
@@ -23,6 +23,48 @@ impl AsyncRedisCrateClient {
 
 #[async_trait]
 impl crate::gateway::interface::redis::Redis for AsyncRedisCrateClient {
+    async fn fcall<K: ToRedisArgs + Send + Sync + 'static, A: ToRedisArgs + Send + Sync + 'static>(
+        &mut self,
+        function_name: &str,
+        keys: &[K],
+        args: &[A],
+    ) -> Result<Value, RedisError> {
+        debug!("Started");
+        defer! {debug!("Ended")}
+
+        let res = cmd("FCALL")
+            .arg(function_name)
+            .arg(keys.len())
+            .arg(keys)
+            .arg(args)
+            .query_async(&mut self.connection)
+            .await
+            .map_err(|e| {
+                debug!("Error calling function: {}", e);
+                e
+            })?;
+
+        Ok(res)
+    }
+
+    async fn function_load(&mut self, replace: bool, code: &str) -> Result<String, RedisError> {
+        debug!("Started");
+        defer! {debug!("Ended")}
+
+        let res = cmd("FUNCTION")
+            .arg("LOAD")
+            .arg(if replace { "REPLACE" } else { "" })
+            .arg(code)
+            .query_async(&mut self.connection)
+            .await
+            .map_err(|e| {
+                debug!("Error loading function: {}", e);
+                e
+            })?;
+
+        Ok(res)
+    }
+
     #[instrument(parent = None, skip(self, items))]
     async fn xadd<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
         &mut self,

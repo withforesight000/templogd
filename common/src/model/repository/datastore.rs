@@ -7,13 +7,21 @@ use crate::model::ambient_condition::AmbientCondition as AmbientConditionModel;
 
 #[async_trait]
 pub trait DataStoreRepository {
-    async fn fetch_ambient_conditions_between_start_and_end<
+    async fn fetch_ambient_conditions<
         T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static,
-        U: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static,
     >(
         &mut self,
         start: T,
-        end: U,
+        end: T,
+    ) -> Result<HashMap<String, AmbientConditionModel>, RedisError>;
+
+    async fn fetch_ambient_conditions_with_sampling<
+        T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static,
+    >(
+        &mut self,
+        start: T,
+        end: T,
+        sampling: T,
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError>;
 
     // save an ambient condition to redis

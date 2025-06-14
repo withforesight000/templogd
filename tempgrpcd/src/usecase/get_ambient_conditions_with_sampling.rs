@@ -13,11 +13,11 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct GetAmbientConditionsUC {
+pub struct GetAmbientConditionsWithSamplingUC {
     tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
 }
 
-impl GetAmbientConditionsUC {
+impl GetAmbientConditionsWithSamplingUC {
     #[instrument(parent = None)]
     pub fn new(tx: tokio::sync::mpsc::Sender<DatastoreOperation>) -> Self {
         info!("Started");
@@ -28,7 +28,7 @@ impl GetAmbientConditionsUC {
 }
 
 #[tonic::async_trait]
-impl GetAmbientConditions for GetAmbientConditionsUC {
+impl GetAmbientConditions for GetAmbientConditionsWithSamplingUC {
     #[instrument(parent = None)]
     async fn run(&self, request: Request<TempgrpcdRequest>) -> Result<Response<TempgrpcdResponse>, Status> {
         debug!("Started");

@@ -7,6 +7,8 @@ pub struct TempgrpcdRequest {
     pub start_time: u64,
     #[prost(uint64, tag = "3")]
     pub end_time: u64,
+    #[prost(uint64, optional, tag = "4")]
+    pub samples: ::core::option::Option<u64>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TempgrpcdResponse {

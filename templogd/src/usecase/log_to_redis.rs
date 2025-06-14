@@ -30,6 +30,9 @@ pub async fn run(
                         DatastoreOperation::FetchAmbientConditions { start: _, end: _, resp: _ } => {
                             panic!()
                         }
+                        DatastoreOperation::FetchAmbientConditionsWithSampling { start: _, end: _, sampling: _, resp: _ } => {
+                            panic!()
+                        }
                     }
                 }
             },

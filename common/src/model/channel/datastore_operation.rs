@@ -9,6 +9,14 @@ pub enum DatastoreOperation {
             Result<std::collections::HashMap<String, AmbientCondition>, redis::RedisError>,
         >,
     },
+    FetchAmbientConditionsWithSampling {
+        start: String,
+        end: String,
+        sampling: String,
+        resp: tokio::sync::oneshot::Sender<
+            Result<std::collections::HashMap<String, AmbientCondition>, redis::RedisError>,
+        >,
+    },
     SaveAmbientCondition {
         ambient_condition: AmbientCondition,
     },

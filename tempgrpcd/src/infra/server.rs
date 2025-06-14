@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use askama::Template;
 use scopeguard::defer;
 use tokio::{
     signal::{
@@ -20,10 +21,16 @@ use tracing::{debug, info, instrument};
 
 use crate::{
     config::Config,
-    controller::{self, get_ambient_conditions},
+    controller::{self, get_ambient_conditions::GetAmbientConditionsImpl},
     pb::tempgrpcd::tempgrpcd_server::TempgrpcdServer,
+    usecase::{
+        get_ambient_conditions::GetAmbientConditionsUC,
+        get_ambient_conditions_with_sampling::GetAmbientConditionsWithSamplingUC,
+    },
 };
 use common::{gateway::datastore::DataStore, model::channel::datastore_operation::DatastoreOperation};
+
+pub const REDIS_XRANGE_WITH_SAMPLING: &str = "xrange_with_sampling";
 
 #[derive(Clone)]
 struct AuthInterceptor {
@@ -83,7 +90,18 @@ fn start_datastore_task(
     defer! {debug!("Ended")}
 
     tokio::spawn(async move {
-        let datastore_client = DataStore::new(
+        #[derive(Template)]
+        #[template(path = "xrange_with_sampling.lua.j2")]
+        struct XRANGEWithSamplingTemplate<'a> {
+            function_name: &'a str,
+        }
+        let xrange_with_sampling_code = XRANGEWithSamplingTemplate {
+            function_name: REDIS_XRANGE_WITH_SAMPLING,
+        }
+        .render()
+        .expect("Failed to render template");
+
+        let mut datastore_client = DataStore::new(
             common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!(
                 "redis://{}:{}",
                 config.get_redis_host(),
@@ -92,6 +110,10 @@ fn start_datastore_task(
             .await,
         )
         .await;
+        datastore_client
+            .load_function_xrange_with_sampling(&xrange_with_sampling_code)
+            .await
+            .expect("Failed to load Lua script for xrange with sampling");
         controller::fetch_from_redis::run(datastore_client, rx, cancellation_token).await
     })
 }
@@ -125,7 +147,10 @@ fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>, con
     debug!("Started");
     defer! {debug!("Ended")}
 
-    let ambient_condition_repository = get_ambient_conditions::GetAmbientConditions::new(tx);
+    let get_ambient_conditions_uc = GetAmbientConditionsUC::new(tx.clone());
+    let get_ambient_conditions_with_sampling_uc = GetAmbientConditionsWithSamplingUC::new(tx);
+    let ambient_condition_repository =
+        GetAmbientConditionsImpl::new(get_ambient_conditions_uc, get_ambient_conditions_with_sampling_uc);
 
     Server::builder()
         .add_service(TempgrpcdServer::with_interceptor(
