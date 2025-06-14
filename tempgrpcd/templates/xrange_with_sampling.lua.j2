@@ -1,43 +1,43 @@
 #!lua name=mylib
 redis.register_function('{{ function_name }}', function(keys, args)
-    local stream_key = keys[1]
-    local start_id = args[1]
-    local end_id = args[2]
+    local stream_key   = keys[1]
+    local start_id     = args[1]
+    local end_id       = args[2]
     local sample_count = tonumber(args[3])
     local result = {}
 
-    -- まず、指定範囲のエントリ数をカウント
-    local count_entries = redis.call('XCOUNT', stream_key, start_id, end_id)
-    if count_entries <= sample_count then
-        -- 全件取得して返す（件数が多くない場合のみ！）
-        local entries = redis.call('XRANGE', stream_key, start_id, end_id)
-        for i = 1, #entries do
-            table.insert(result, entries[i])
-        end
-        return result
+    -- 範囲内を sample_count+1 件だけ取得して件数をチェック
+    local head = redis.call('XRANGE', stream_key, start_id, end_id, 'COUNT', sample_count+1)
+    if #head <= sample_count then
+        -- 全件が sample_count 件以下 → 全件返却
+        return head
     end
 
-    -- 通常の間引きロジック
+    -- 範囲が大きい場合の間引きロジック
     local function id_to_ts(id)
         return tonumber(string.match(id, "^(%d+)-"))
     end
     local ts_start = id_to_ts(start_id)
-    local ts_end = id_to_ts(end_id)
+    local ts_end   = id_to_ts(end_id)
     if not ts_start or not ts_end or ts_start >= ts_end then
-        return result
+        return {}
     end
 
     local step = math.floor((ts_end - ts_start) / (sample_count - 1))
     if step < 1 then step = 1 end
 
-    for i=0,sample_count-1 do
+    for i = 0, sample_count-1 do
         local ts = ts_start + i * step
-        local search_id = tostring(ts) .. "-0"
-        -- その区間の最初のエントリを一件取得
-        local entries = redis.call("XRANGE", stream_key, search_id, end_id, "COUNT", 1)
-        if #entries > 0 then
-            table.insert(result, entries[1])
+        local cursor_id = tostring(ts) .. "-0"
+        local chunk = redis.call(
+            'XRANGE', stream_key,
+            cursor_id, end_id,
+            'COUNT', 1
+        )
+        if #chunk > 0 then
+            table.insert(result, chunk[1])
         end
     end
+
     return result
 end)
