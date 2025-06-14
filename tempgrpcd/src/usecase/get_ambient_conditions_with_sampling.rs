@@ -37,12 +37,14 @@ impl GetAmbientConditions for GetAmbientConditionsWithSamplingUC {
         let tempgrpcd_request = request.into_inner();
         let start = tempgrpcd_request.start_time;
         let end = tempgrpcd_request.end_time;
+        let samples = tempgrpcd_request.samples.unwrap();
 
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.tx
-            .send(DatastoreOperation::FetchAmbientConditions {
+            .send(DatastoreOperation::FetchAmbientConditionsWithSampling {
                 start: start.to_string(),
                 end: end.to_string(),
+                samples: samples.to_string(),
                 resp: resp_tx,
             })
             .await

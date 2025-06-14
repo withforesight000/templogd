@@ -21,7 +21,7 @@ pub trait DataStoreRepository {
         &mut self,
         start: T,
         end: T,
-        sampling: T,
+        samples: T,
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError>;
 
     // save an ambient condition to redis

@@ -30,8 +30,8 @@ pub async fn run(
                             }
                             info!("Sent ambient conditions to get_ambient_conditions task");
                         }
-                        DatastoreOperation::FetchAmbientConditionsWithSampling { start, end, sampling, resp } => {
-                            let res = client.fetch_ambient_conditions_with_sampling(start, end, sampling).await;
+                        DatastoreOperation::FetchAmbientConditionsWithSampling { start, end, samples, resp } => {
+                            let res = client.fetch_ambient_conditions_with_sampling(start, end, samples).await;
                             info!("Fetched ambient conditions with sampling from Redis: {:?}", res);
 
                             let result = resp.send(res);
