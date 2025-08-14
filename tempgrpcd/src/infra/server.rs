@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use askama::Template;
 use scopeguard::defer;
+use tempgrpcd_protos::tempgrpcd::v1::tempgrpcd_service_server::TempgrpcdServiceServer;
 use tokio::{
     signal::{
         self,
@@ -22,7 +23,6 @@ use tracing::{debug, info, instrument};
 use crate::{
     config::Config,
     controller::{self, get_ambient_conditions::GetAmbientConditionsImpl},
-    pb::tempgrpcd::tempgrpcd_server::TempgrpcdServer,
     usecase::{
         get_ambient_conditions::GetAmbientConditionsUC,
         get_ambient_conditions_with_sampling::GetAmbientConditionsWithSamplingUC,
@@ -152,17 +152,16 @@ fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>, con
     let ambient_condition_repository =
         GetAmbientConditionsImpl::new(get_ambient_conditions_uc, get_ambient_conditions_with_sampling_uc);
 
-    Server::builder()
-        .add_service(TempgrpcdServer::with_interceptor(
-            ambient_condition_repository,
-            AuthInterceptor {
-                token: config.get_bearer_token().to_string(),
-            },
-        ))
-        .add_service(
-            Builder::configure()
-                .register_encoded_file_descriptor_set(tonic::include_file_descriptor_set!("tempgrpcd"))
-                .build_v1()
-                .unwrap(),
-        )
+    Server::builder().add_service(TempgrpcdServiceServer::with_interceptor(
+        ambient_condition_repository,
+        AuthInterceptor {
+            token: config.get_bearer_token().to_string(),
+        },
+    ))
+    .add_service(
+        Builder::configure()
+            .register_encoded_file_descriptor_set(tempgrpcd_protos::tempgrpcd::v1::FILE_DESCRIPTOR_SET)
+            .build_v1()
+            .unwrap(),
+    )
 }

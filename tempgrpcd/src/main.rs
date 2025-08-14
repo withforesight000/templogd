@@ -4,7 +4,6 @@ use tracing::info;
 mod config;
 mod controller;
 mod infra;
-mod pb;
 mod usecase;
 
 /// tempgrpcd

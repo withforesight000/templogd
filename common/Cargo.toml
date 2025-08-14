@@ -1,7 +1,7 @@
 [package]
 name = "common"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -12,7 +12,7 @@ cfg-if = "1.0"
 mockall = { version = "0.13" }
 mockall_double = { version = "0.3" }
 nix = { version = "0.30", features = ["fs"] }
-redis = { version = "0.31", features = ["connection-manager", "tokio-comp", "streams"] }
+redis = { version = "0.32", features = ["connection-manager", "tokio-comp", "streams"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 scopeguard = "1.2"
 serde_json = { version = "1.0" }

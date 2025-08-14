@@ -1,14 +1,18 @@
 use std::fmt::Debug;
 
 use scopeguard::defer;
+use tempgrpcd_protos::tempgrpcd::v1::{
+    tempgrpcd_service_server::TempgrpcdService, GetAmbientConditionsRequest, GetAmbientConditionsResponse,
+};
 use tonic::{Request, Response, Status};
 use tracing::{debug, info, instrument};
 
-use crate::pb::tempgrpcd::{tempgrpcd_server::Tempgrpcd, TempgrpcdRequest, TempgrpcdResponse};
-
 #[tonic::async_trait]
 pub trait GetAmbientConditions {
-    async fn run(&self, request: Request<TempgrpcdRequest>) -> Result<Response<TempgrpcdResponse>, Status>;
+    async fn run(
+        &self,
+        request: Request<GetAmbientConditionsRequest>,
+    ) -> Result<Response<GetAmbientConditionsResponse>, Status>;
 }
 
 #[derive(Debug)]
@@ -31,12 +35,16 @@ impl<G: GetAmbientConditions + Debug, S: GetAmbientConditions + Debug> GetAmbien
 }
 
 #[tonic::async_trait]
-impl<G: GetAmbientConditions + Sync + Send + 'static + Debug, S: GetAmbientConditions + Sync + Send + 'static + Debug> Tempgrpcd for GetAmbientConditionsImpl<G, S> {
+impl<
+        G: GetAmbientConditions + Sync + Send + 'static + Debug,
+        S: GetAmbientConditions + Sync + Send + 'static + Debug,
+    > TempgrpcdService for GetAmbientConditionsImpl<G, S>
+{
     #[instrument(parent = None)]
     async fn get_ambient_conditions(
         &self,
-        request: Request<TempgrpcdRequest>,
-    ) -> Result<Response<TempgrpcdResponse>, Status> {
+        request: tonic::Request<tempgrpcd_protos::tempgrpcd::v1::GetAmbientConditionsRequest>,
+    ) -> Result<Response<GetAmbientConditionsResponse>, Status> {
         debug!("Started");
         defer! {debug!("Ended")}
 

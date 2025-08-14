@@ -1,16 +1,11 @@
 use common::model::channel::datastore_operation::DatastoreOperation;
 use scopeguard::defer;
 use std::collections::HashMap;
+use tempgrpcd_protos::tempgrpcd::v1::{GetAmbientConditionsRequest, GetAmbientConditionsResponse};
 use tonic::{Request, Response, Status};
 use tracing::{debug, info, instrument};
 
-use crate::{
-    controller::get_ambient_conditions::GetAmbientConditions,
-    pb::{
-        self,
-        tempgrpcd::{TempgrpcdRequest, TempgrpcdResponse},
-    },
-};
+use crate::controller::get_ambient_conditions::GetAmbientConditions;
 
 #[derive(Debug)]
 pub struct GetAmbientConditionsUC {
@@ -30,7 +25,10 @@ impl GetAmbientConditionsUC {
 #[tonic::async_trait]
 impl GetAmbientConditions for GetAmbientConditionsUC {
     #[instrument(parent = None)]
-    async fn run(&self, request: Request<TempgrpcdRequest>) -> Result<Response<TempgrpcdResponse>, Status> {
+    async fn run(
+        &self,
+        request: Request<GetAmbientConditionsRequest>,
+    ) -> Result<Response<GetAmbientConditionsResponse>, Status> {
         debug!("Started");
         defer! {debug!("Ended")}
 
@@ -41,8 +39,8 @@ impl GetAmbientConditions for GetAmbientConditionsUC {
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.tx
             .send(DatastoreOperation::FetchAmbientConditions {
-                start: start.to_string(),
-                end: end.to_string(),
+                start: start.unwrap().seconds.to_string(),
+                end: end.unwrap().seconds.to_string(),
                 resp: resp_tx,
             })
             .await
@@ -51,21 +49,20 @@ impl GetAmbientConditions for GetAmbientConditionsUC {
 
         let ambient_conditions = resp_rx.await.unwrap().unwrap();
 
-        Ok(Response::new(TempgrpcdResponse {
-            version: 1,
+        Ok(Response::new(GetAmbientConditionsResponse {
             ambient_conditions: ambient_conditions
                 .into_iter()
                 .map(|(key, value)| {
                     (
                         key,
-                        pb::tempgrpcd::AmbientCondition {
+                        tempgrpcd_protos::tempgrpcd::v1::AmbientCondition {
                             temperature: value.get_temperature() as f32,
                             humidity: value.get_humidity() as f32,
                             illumination: value.get_illumination() as f32,
                         },
                     )
                 })
-                .collect::<HashMap<String, pb::tempgrpcd::AmbientCondition>>(),
+                .collect::<HashMap<String, tempgrpcd_protos::tempgrpcd::v1::AmbientCondition>>(),
         }))
 
         // Err(Status::unimplemented("Not implemented"))
