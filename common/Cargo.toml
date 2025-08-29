@@ -17,7 +17,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 scopeguard = "1.2"
 serde_json = { version = "1.0" }
 syslog = "7.0"
-tokio = { version = "1.39", features = ["full"] }
+tokio = { version = "1.47", features = ["full"] }
 tracing = "0.1"
 
 [dev-dependencies]
