@@ -52,20 +52,23 @@ impl GetAmbientConditions for GetAmbientConditionsWithSamplingUC {
         let ambient_conditions = resp_rx.await.unwrap().unwrap();
         debug!("Received ambient conditions with sampling: {:?}", ambient_conditions);
 
+        // Pre-allocate response HashMap to avoid reallocations
+        let response_conditions = ambient_conditions
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key,
+                    tempgrpcd_protos::tempgrpcd::v1::AmbientCondition {
+                        temperature: value.get_temperature() as f32,
+                        humidity: value.get_humidity() as f32,
+                        illumination: value.get_illumination() as f32,
+                    },
+                )
+            })
+            .collect::<HashMap<String, tempgrpcd_protos::tempgrpcd::v1::AmbientCondition>>();
+
         Ok(Response::new(GetAmbientConditionsResponse {
-            ambient_conditions: ambient_conditions
-                .into_iter()
-                .map(|(key, value)| {
-                    (
-                        key,
-                        tempgrpcd_protos::tempgrpcd::v1::AmbientCondition {
-                            temperature: value.get_temperature() as f32,
-                            humidity: value.get_humidity() as f32,
-                            illumination: value.get_illumination() as f32,
-                        },
-                    )
-                })
-                .collect::<HashMap<String, tempgrpcd_protos::tempgrpcd::v1::AmbientCondition>>(),
+            ambient_conditions: response_conditions,
         }))
 
         // Err(Status::unimplemented("Not implemented"))

@@ -54,9 +54,12 @@ impl Redis for AsyncRedisCrateClient {
         debug!("Started");
         defer! {debug!("Ended")}
 
-        let res = cmd("FUNCTION")
-            .arg("LOAD")
-            .arg(if replace { "REPLACE" } else { "" })
+        let mut cmd = cmd("FUNCTION");
+        cmd.arg("LOAD");
+        if replace {
+            cmd.arg("REPLACE");
+        }
+        let res = cmd
             .arg(code)
             .query_async(&mut self.connection)
             .await
