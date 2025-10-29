@@ -40,9 +40,9 @@ impl GetAmbientConditions for GetAmbientConditionsWithSamplingUC {
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.tx
             .send(DatastoreOperation::FetchAmbientConditionsWithSampling {
-                start: start.unwrap().seconds.to_string(),
-                end: end.unwrap().seconds.to_string(),
-                samples: samples.to_string(),
+                start: start.unwrap().seconds,
+                end: end.unwrap().seconds,
+                samples,
                 resp: resp_tx,
             })
             .await

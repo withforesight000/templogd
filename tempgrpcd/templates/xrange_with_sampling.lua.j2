@@ -6,36 +6,23 @@ redis.register_function('{{ function_name }}', function(keys, args)
     local sample_count = tonumber(args[3])
     local result = {}
 
-    -- 範囲内を sample_count+1 件だけ取得して件数をチェック
-    local head = redis.call('XRANGE', stream_key, start_id, end_id, 'COUNT', sample_count+1)
-    if #head <= sample_count then
-        -- 全件が sample_count 件以下 → 全件返却
-        return head
+    -- Fetch all entries in range with a single XRANGE call
+    local all_entries = redis.call('XRANGE', stream_key, start_id, end_id)
+    local total_count = #all_entries
+    
+    -- If total entries are less than or equal to requested samples, return all
+    if total_count <= sample_count then
+        return all_entries
     end
 
-    -- 範囲が大きい場合の間引きロジック
-    local function id_to_ts(id)
-        return tonumber(string.match(id, "^(%d+)-?"))
-    end
-    local ts_start = id_to_ts(start_id)
-    local ts_end   = id_to_ts(end_id)
-    if not ts_start or not ts_end or ts_start >= ts_end then
-        return {}
-    end
-
-    local step = math.floor((ts_end - ts_start) / (sample_count - 1))
-    if step < 1 then step = 1 end
-
-    for i = 0, sample_count-1 do
-        local ts = ts_start + i * step
-        local cursor_id = tostring(ts) .. "-0"
-        local chunk = redis.call(
-            'XRANGE', stream_key,
-            cursor_id, end_id,
-            'COUNT', 1
-        )
-        if #chunk > 0 then
-            table.insert(result, chunk[1])
+    -- Calculate sampling step for uniform distribution
+    local step = total_count / sample_count
+    
+    -- Sample entries uniformly across the range
+    for i = 0, sample_count - 1 do
+        local idx = math.floor(i * step) + 1
+        if idx <= total_count then
+            table.insert(result, all_entries[idx])
         end
     end
 

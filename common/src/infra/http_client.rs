@@ -60,7 +60,9 @@ impl HttpClient for ReqwestClient {
         debug!("Started");
         defer! {debug!("Ended")}
 
-        let response = self.client.get(url).header("Authorization", format!("Bearer {}", bearer_token)).send().await;
+        // Avoid format! allocation by using concat
+        let auth_header = ["Bearer ", bearer_token].concat();
+        let response = self.client.get(url).header("Authorization", auth_header).send().await;
         match response {
             Ok(response) => match ReqwestClient::handle_response(response).await {
                 Ok(body) => Ok(body),

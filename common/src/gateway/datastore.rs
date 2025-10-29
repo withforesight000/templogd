@@ -54,21 +54,30 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         let res: Result<redis::Value, RedisError> = self.redis_client.xrange("ambient_condition", start, end).await;
         match res {
             Ok(values) => {
-                let mut ambient_conditions = HashMap::new();
-                for value in values.as_sequence().unwrap() {
-                    let seq = value.clone().into_sequence().unwrap();
-                    let k = from_redis_value(&seq[0]).unwrap();
-                    let v = seq[1].clone().into_sequence().unwrap();
-                    ambient_conditions.insert(
-                        k,
-                        ambient_condition::new(
-                            from_redis_value(&v[1]).unwrap(),
-                            from_redis_value(&v[3]).unwrap(),
-                            from_redis_value(&v[5]).unwrap(),
-                        ),
-                    );
+                // Avoid cloning by using as_sequence() which returns a reference
+                if let Some(seq_list) = values.as_sequence() {
+                    // Pre-allocate HashMap with known capacity to avoid reallocations
+                    let mut ambient_conditions = HashMap::with_capacity(seq_list.len());
+                    for value in seq_list {
+                        if let Some(seq) = value.as_sequence() {
+                            let k = from_redis_value(&seq[0]).unwrap();
+                            // Access nested sequence without cloning
+                            if let Some(v) = seq[1].as_sequence() {
+                                ambient_conditions.insert(
+                                    k,
+                                    ambient_condition::new(
+                                        from_redis_value(&v[1]).unwrap(),
+                                        from_redis_value(&v[3]).unwrap(),
+                                        from_redis_value(&v[5]).unwrap(),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    Ok(ambient_conditions)
+                } else {
+                    Ok(HashMap::new())
                 }
-                Ok(ambient_conditions)
             }
             Err(e) => Err(e),
         }
@@ -88,21 +97,30 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
             self.redis_client.fcall("xrange_with_sampling", &["ambient_condition"], &[start, end, samples]).await;
         match res {
             Ok(values) => {
-                let mut ambient_conditions = HashMap::new();
-                for value in values.as_sequence().unwrap() {
-                    let seq = value.clone().into_sequence().unwrap();
-                    let k = from_redis_value(&seq[0]).unwrap();
-                    let v = seq[1].clone().into_sequence().unwrap();
-                    ambient_conditions.insert(
-                        k,
-                        ambient_condition::new(
-                            from_redis_value(&v[1]).unwrap(),
-                            from_redis_value(&v[3]).unwrap(),
-                            from_redis_value(&v[5]).unwrap(),
-                        ),
-                    );
+                // Avoid cloning by using as_sequence() which returns a reference
+                if let Some(seq_list) = values.as_sequence() {
+                    // Pre-allocate HashMap with known capacity to avoid reallocations
+                    let mut ambient_conditions = HashMap::with_capacity(seq_list.len());
+                    for value in seq_list {
+                        if let Some(seq) = value.as_sequence() {
+                            let k = from_redis_value(&seq[0]).unwrap();
+                            // Access nested sequence without cloning
+                            if let Some(v) = seq[1].as_sequence() {
+                                ambient_conditions.insert(
+                                    k,
+                                    ambient_condition::new(
+                                        from_redis_value(&v[1]).unwrap(),
+                                        from_redis_value(&v[3]).unwrap(),
+                                        from_redis_value(&v[5]).unwrap(),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    Ok(ambient_conditions)
+                } else {
+                    Ok(HashMap::new())
                 }
-                Ok(ambient_conditions)
             }
             Err(e) => Err(e),
         }
