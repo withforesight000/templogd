@@ -16,6 +16,7 @@ tempgrpcd-protos = { git = "ssh://gitea/ryuichiro/protobuf-rust.git", package = 
 tokio = { version = "1.39", features = ["full"] }
 tokio-util = "0.7"
 tonic = "0.14"
+tonic-health = "0.14"
 tonic-reflection = { version = "0.14", features = ["server"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"

@@ -6,16 +6,16 @@ use tempgrpcd_protos::tempgrpcd::v1::tempgrpcd_service_server::TempgrpcdServiceS
 use tokio::{
     signal::{
         self,
-        unix::{signal, SignalKind},
+        unix::{SignalKind, signal},
     },
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
 use tonic::{
+    Request, Status,
     metadata::MetadataValue,
     service::Interceptor,
-    transport::{server::Router, Server},
-    Request, Status,
+    transport::{Server, server::Router},
 };
 use tonic_reflection::server::Builder;
 use tracing::{debug, info, instrument};
@@ -60,7 +60,7 @@ pub async fn run(config: Arc<Config>) {
     let redis_task = start_datastore_task(config.clone(), rx, cancellation_token.clone());
     start_signal_handler_task(cancellation_token.clone()).await;
 
-    let grpc_server = start_grpc_server_task(tx, config.clone());
+    let grpc_server = start_grpc_server_task(tx, config.clone()).await;
     let addr = format!("{}:{}", config.get_server_bind_address(), config.get_server_port())
         .parse()
         .expect("Unable to parse socket address");
@@ -143,7 +143,7 @@ async fn start_signal_handler_task(cancellation_token: CancellationToken) {
 }
 
 #[instrument(parent = None)]
-fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>, config: Arc<Config>) -> Router {
+async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>, config: Arc<Config>) -> Router {
     debug!("Started");
     defer! {debug!("Ended")}
 
@@ -151,17 +151,23 @@ fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>, con
     let get_ambient_conditions_with_sampling_uc = GetAmbientConditionsWithSamplingUC::new(tx);
     let ambient_condition_repository =
         GetAmbientConditionsImpl::new(get_ambient_conditions_uc, get_ambient_conditions_with_sampling_uc);
+    let (reporter, health_server) = tonic_health::server::health_reporter();
+    reporter.set_serving::<TempgrpcdServiceServer<
+        GetAmbientConditionsImpl<GetAmbientConditionsUC, GetAmbientConditionsWithSamplingUC>,
+    >>().await;
 
-    Server::builder().add_service(TempgrpcdServiceServer::with_interceptor(
-        ambient_condition_repository,
-        AuthInterceptor {
-            token: config.get_bearer_token().to_string(),
-        },
-    ))
-    .add_service(
-        Builder::configure()
-            .register_encoded_file_descriptor_set(tempgrpcd_protos::tempgrpcd::v1::FILE_DESCRIPTOR_SET)
-            .build_v1()
-            .unwrap(),
-    )
+    Server::builder()
+        .add_service(TempgrpcdServiceServer::with_interceptor(
+            ambient_condition_repository,
+            AuthInterceptor {
+                token: config.get_bearer_token().to_string(),
+            },
+        ))
+        .add_service(
+            Builder::configure()
+                .register_encoded_file_descriptor_set(tempgrpcd_protos::tempgrpcd::v1::FILE_DESCRIPTOR_SET)
+                .build_v1()
+                .unwrap(),
+        )
+        .add_service(health_server)
 }
