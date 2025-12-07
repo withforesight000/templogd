@@ -1848,7 +1848,7 @@ dependencies = [
 [[package]]
 name = "tempgrpcd-protos"
 version = "0.1.0"
-source = "git+ssh://gitea/ryuichiro/protobuf-rust.git#127be9b6cf161115f11b02dc94b3e6f82cde426f"
+source = "git+https://github.com/withforesight000/protobuf-rust.git#127be9b6cf161115f11b02dc94b3e6f82cde426f"
 dependencies = [
  "pbjson",
  "pbjson-types",

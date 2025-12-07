@@ -12,7 +12,7 @@ common = { path = "../common" }
 prost = "0.14"
 redis = { version = "0.32", features = ["connection-manager", "tokio-comp", "streams"] }
 scopeguard = "1.2"
-tempgrpcd-protos = { git = "ssh://gitea/ryuichiro/protobuf-rust.git", package = "tempgrpcd-protos" }
+tempgrpcd-protos = { git = "https://github.com/withforesight000/protobuf-rust.git", package = "tempgrpcd-protos" }
 tokio = { version = "1.39", features = ["full"] }
 tokio-util = "0.7"
 tonic = "0.14"
