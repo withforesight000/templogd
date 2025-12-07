@@ -166,6 +166,7 @@ async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation
         .add_service(
             Builder::configure()
                 .register_encoded_file_descriptor_set(tempgrpcd_protos::tempgrpcd::v1::FILE_DESCRIPTOR_SET)
+                .register_encoded_file_descriptor_set(tonic_health::pb::FILE_DESCRIPTOR_SET)
                 .build_v1()
                 .unwrap(),
         )
