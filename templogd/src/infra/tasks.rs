@@ -18,9 +18,9 @@ use common::model::channel::datastore_operation::DatastoreOperation;
 pub async fn run(config: Arc<Config>) {
     run_with(
         config,
-        |token| make_signal_handlers(token),
-        |cfg| make_nature_remo_client_factory(cfg),
-        |cfg| make_redis_client_factory(cfg),
+        make_signal_handlers,
+        make_nature_remo_client_factory,
+        make_redis_client_factory,
     )
     .await;
 }
