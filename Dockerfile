@@ -1,16 +1,16 @@
-FROM rust:1 AS planner
+FROM rust:1 AS base
+RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+RUN cargo binstall cargo-chef
 
-RUN cargo install cargo-chef
+FROM base AS planner
 
 WORKDIR /src
 COPY . /src
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM rust:1 AS builder
-
+FROM base AS builder
 RUN apt-get update && apt-get upgrade -y
 RUN apt-get install -y protobuf-compiler
-RUN cargo install cargo-chef
 
 WORKDIR /src
 
