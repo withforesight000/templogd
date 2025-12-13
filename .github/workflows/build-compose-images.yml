@@ -24,6 +24,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
@@ -44,10 +47,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build services from compose.yml
-        run: |
-          docker compose -f compose.yml pull
-          docker compose -f compose.yml build --parallel
-
-      - name: Push services to GHCR
-        run: docker compose -f compose.yml push
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/withforesight000/templogd:latest
+            ghcr.io/withforesight000/tempgrpcd:latest

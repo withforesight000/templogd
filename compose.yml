@@ -5,6 +5,7 @@ services:
       context: .
       dockerfile: ./Dockerfile
       target: templogd
+    image: ghcr.io/withforesight000/templogd:latest
     restart: always
     environment:
       - TEMPLOGD_NATURE_REMO_API_TOKEN=XXX
@@ -17,6 +18,7 @@ services:
       context: .
       dockerfile: ./Dockerfile
       target: tempgrpcd
+    image: ghcr.io/withforesight000/tempgrpcd:latest
     restart: always
     environment:
       - TEMPGRPCD_SERVER_BIND_ADDRESS=0.0.0.0
