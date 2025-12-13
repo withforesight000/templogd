@@ -20,7 +20,6 @@ This repository hosts a pair of Rust services that collect ambient sensor readin
 - `protobuf-compiler` (a.k.a. `protoc`) so `tempgrpcd` can build gRPC descriptors.
 - Redis 7.x for local development, or access to a compatible Redis deployment.
 - Nature Remo API token and the target device ID.
-- SSH access to the private dependency `tempgrpcd-protos` hosted at `ssh://gitea/ryuichiro/protobuf-rust.git`.
 
 ## Running Locally
 1. Start Redis (for example: `docker run --rm -p 6379:6379 redis:7`).
@@ -74,8 +73,6 @@ docker compose up --build
 - Lint: `cargo clippy --all-targets --all-features`
 - Tests: `cargo test --workspace`
 
-The workspace uses `tracing` for logging; set `RUST_LOG=debug` (or rely on the defaults) to observe span-oriented logs during development. When modifying gRPC contracts, update the private `tempgrpcd-protos` crate first, then re-run `cargo build` so tonic can regenerate bindings.
-
 ## Directory Layout
 - `templogd/` – CLI, configuration, controllers, and use cases for the Nature Remo polling daemon.
 - `tempgrpcd/` – gRPC server, Redis fetch pipeline, and Askama template used to render the Lua sampling function.
@@ -83,6 +80,5 @@ The workspace uses `tracing` for logging; set `RUST_LOG=debug` (or rely on the d
 - `compose.yml` / `Dockerfile` – container orchestration for development or deployment.
 
 ## Troubleshooting
-- **Missing `tempgrpcd-protos`** – verify your SSH configuration matches the snippet above and that your agent has the correct key.
 - **Redis script errors** – the server loads `xrange_with_sampling` under the `mylib` library. Flush scripts with `FT.CALL`? no; if the LUA function signature changes, restart Redis or run `FUNCTION FLUSH` (with caution) before redeploying.
 - **Nature Remo authentication** – the API returns HTTP 401 if the token is invalid; the daemon logs the failure and retries after the 30-second interval.
