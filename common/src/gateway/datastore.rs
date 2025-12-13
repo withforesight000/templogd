@@ -53,9 +53,7 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
 
         let res: Result<redis::Value, RedisError> = self.redis_client.xrange("ambient_condition", start, end).await;
         match res {
-            Ok(values) => {
-                Ok(parse_ambient_conditions(&values))
-            }
+            Ok(values) => Ok(parse_ambient_conditions(&values)),
             Err(e) => Err(e),
         }
     }
@@ -73,9 +71,7 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         let res: Result<redis::Value, RedisError> =
             self.redis_client.fcall("xrange_with_sampling", &["ambient_condition"], &[start, end, samples]).await;
         match res {
-            Ok(values) => {
-                Ok(parse_ambient_conditions(&values))
-            }
+            Ok(values) => Ok(parse_ambient_conditions(&values)),
             Err(e) => Err(e),
         }
     }

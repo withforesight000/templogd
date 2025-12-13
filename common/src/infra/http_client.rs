@@ -28,7 +28,7 @@ impl ReqwestClient {
     #[instrument(parent = None)]
     pub fn new() -> ReqwestClient {
         info!("Started");
-        defer!{info!("Ended")}
+        defer! {info!("Ended")}
 
         ReqwestClient {
             client: reqwest::Client::new(),
@@ -56,7 +56,11 @@ impl ReqwestClient {
 #[async_trait]
 impl HttpClient for ReqwestClient {
     #[instrument(parent = None)]
-    async fn get_with_bearer_token(&self, url: &str, bearer_token: &str) -> Result<Value, Box<dyn std::error::Error + Send>> {
+    async fn get_with_bearer_token(
+        &self,
+        url: &str,
+        bearer_token: &str,
+    ) -> Result<Value, Box<dyn std::error::Error + Send>> {
         debug!("Started");
         defer! {debug!("Ended")}
 
@@ -76,8 +80,8 @@ mod tests {
     use super::*;
     use crate::infra::http_client::errors::ClientError;
     use httpmock::{Method, MockServer};
-    use std::net::TcpListener;
     use serde_json::json;
+    use std::net::TcpListener;
 
     fn can_bind_localhost() -> bool {
         match TcpListener::bind(("127.0.0.1", 0)) {
@@ -122,10 +126,7 @@ mod tests {
         });
 
         let client = ReqwestClient::new();
-        let err = client
-            .get_with_bearer_token(&format!("{}/fail", server.base_url()), "token")
-            .await
-            .unwrap_err();
+        let err = client.get_with_bearer_token(&format!("{}/fail", server.base_url()), "token").await.unwrap_err();
 
         let client_err = err.downcast::<ClientError>().unwrap();
         match *client_err {
@@ -149,10 +150,8 @@ mod tests {
         });
 
         let client = ReqwestClient::new();
-        let err = client
-            .get_with_bearer_token(&format!("{}/invalid-json", server.base_url()), "token")
-            .await
-            .unwrap_err();
+        let err =
+            client.get_with_bearer_token(&format!("{}/invalid-json", server.base_url()), "token").await.unwrap_err();
 
         let client_err = err.downcast::<ClientError>().unwrap();
         match *client_err {

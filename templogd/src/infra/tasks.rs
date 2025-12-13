@@ -174,7 +174,10 @@ mod tests {
     use redis::ToRedisArgs;
     use std::collections::HashMap;
     use std::fmt::Debug;
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     use std::time::Duration;
 
     #[derive(Debug)]
@@ -299,7 +302,8 @@ mod tests {
         impl NatureRemo for StubNatureRemoOnce {
             async fn fetch_ambient_condition(
                 &self,
-            ) -> Result<common::model::ambient_condition::AmbientCondition, Box<dyn std::error::Error + Send>> {
+            ) -> Result<common::model::ambient_condition::AmbientCondition, Box<dyn std::error::Error + Send>>
+            {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Ok(common::model::ambient_condition::new(1.0, 2.0, 3.0))
             }
@@ -311,7 +315,9 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
 
         let factory_calls = calls.clone();
-        let handle = start_nature_remo_api_task(cfg, token.clone(), tx, move || StubNatureRemoOnce { calls: factory_calls });
+        let handle = start_nature_remo_api_task(cfg, token.clone(), tx, move || StubNatureRemoOnce {
+            calls: factory_calls,
+        });
 
         let op = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await.unwrap().unwrap();
         token.cancel();
@@ -337,7 +343,8 @@ mod tests {
                 &mut self,
                 _start: T,
                 _end: T,
-            ) -> Result<HashMap<String, common::model::ambient_condition::AmbientCondition>, redis::RedisError> {
+            ) -> Result<HashMap<String, common::model::ambient_condition::AmbientCondition>, redis::RedisError>
+            {
                 Ok(HashMap::new())
             }
 
@@ -346,7 +353,8 @@ mod tests {
                 _start: T,
                 _end: T,
                 _samples: T,
-            ) -> Result<HashMap<String, common::model::ambient_condition::AmbientCondition>, redis::RedisError> {
+            ) -> Result<HashMap<String, common::model::ambient_condition::AmbientCondition>, redis::RedisError>
+            {
                 Ok(HashMap::new())
             }
 

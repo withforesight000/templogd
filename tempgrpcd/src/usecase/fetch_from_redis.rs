@@ -94,21 +94,17 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn handles_fetch_and_sampling_requests() {
         let mut datastore = MockDataStore::new();
-        datastore
-            .expect_fetch_ambient_conditions()
-            .returning(|s: String, e: String| {
-                assert_eq!(s, "0");
-                assert_eq!(e, "1");
-                Ok(std::collections::HashMap::new())
-            });
-        datastore
-            .expect_fetch_ambient_conditions_with_sampling()
-            .returning(|s: String, e: String, samples: String| {
-                assert_eq!(s, "0");
-                assert_eq!(e, "1");
-                assert_eq!(samples, "2");
-                Ok(std::collections::HashMap::new())
-            });
+        datastore.expect_fetch_ambient_conditions().returning(|s: String, e: String| {
+            assert_eq!(s, "0");
+            assert_eq!(e, "1");
+            Ok(std::collections::HashMap::new())
+        });
+        datastore.expect_fetch_ambient_conditions_with_sampling().returning(|s: String, e: String, samples: String| {
+            assert_eq!(s, "0");
+            assert_eq!(e, "1");
+            assert_eq!(samples, "2");
+            Ok(std::collections::HashMap::new())
+        });
 
         let (tx, rx) = tokio::sync::mpsc::channel(2);
         let token = CancellationToken::new();

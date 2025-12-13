@@ -92,7 +92,13 @@ mod tests {
         });
 
         let handle = tokio::spawn(async move {
-            if let Some(DatastoreOperation::FetchAmbientConditionsWithSampling { start, end, samples, resp }) = rx.recv().await {
+            if let Some(DatastoreOperation::FetchAmbientConditionsWithSampling {
+                start,
+                end,
+                samples,
+                resp,
+            }) = rx.recv().await
+            {
                 assert_eq!(start, "0");
                 assert_eq!(end, "1");
                 assert_eq!(samples, "5");

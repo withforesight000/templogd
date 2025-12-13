@@ -7,9 +7,7 @@ use crate::model::ambient_condition::AmbientCondition as AmbientConditionModel;
 
 #[async_trait]
 pub trait DataStoreRepository {
-    async fn fetch_ambient_conditions<
-        T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + Debug,
-    >(
+    async fn fetch_ambient_conditions<T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + Debug>(
         &mut self,
         start: T,
         end: T,

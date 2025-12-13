@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use scopeguard::defer;
 use tempgrpcd_protos::tempgrpcd::v1::{
-    tempgrpcd_service_server::TempgrpcdService, GetAmbientConditionsRequest, GetAmbientConditionsResponse,
+    GetAmbientConditionsRequest, GetAmbientConditionsResponse, tempgrpcd_service_server::TempgrpcdService,
 };
 use tonic::{Request, Response, Status};
 use tracing::{debug, info, instrument};
@@ -35,10 +35,8 @@ impl<G: GetAmbientConditions + Debug, S: GetAmbientConditions + Debug> GetAmbien
 }
 
 #[tonic::async_trait]
-impl<
-        G: GetAmbientConditions + Sync + Send + 'static + Debug,
-        S: GetAmbientConditions + Sync + Send + 'static + Debug,
-    > TempgrpcdService for GetAmbientConditionsImpl<G, S>
+impl<G: GetAmbientConditions + Sync + Send + 'static + Debug, S: GetAmbientConditions + Sync + Send + 'static + Debug>
+    TempgrpcdService for GetAmbientConditionsImpl<G, S>
 {
     #[instrument(parent = None)]
     async fn get_ambient_conditions(
@@ -79,7 +77,9 @@ mod tests {
             _request: Request<GetAmbientConditionsRequest>,
         ) -> Result<Response<GetAmbientConditionsResponse>, Status> {
             let _ = self.tx.send("called");
-            Ok(Response::new(GetAmbientConditionsResponse { ambient_conditions: Default::default() }))
+            Ok(Response::new(GetAmbientConditionsResponse {
+                ambient_conditions: Default::default(),
+            }))
         }
     }
 
@@ -95,10 +95,7 @@ mod tests {
     async fn routes_without_samples_to_primary_uc() {
         let (tx_primary, mut rx_primary) = mpsc::unbounded_channel();
         let (tx_sampling, _rx_sampling) = mpsc::unbounded_channel();
-        let svc = GetAmbientConditionsImpl::new(
-            StubUc { tx: tx_primary },
-            StubUc { tx: tx_sampling },
-        );
+        let svc = GetAmbientConditionsImpl::new(StubUc { tx: tx_primary }, StubUc { tx: tx_sampling });
 
         let _ = svc.get_ambient_conditions(request(false)).await.unwrap();
         assert_eq!(rx_primary.recv().await.unwrap(), "called");
@@ -108,10 +105,7 @@ mod tests {
     async fn routes_with_samples_to_sampling_uc() {
         let (tx_primary, _rx_primary) = mpsc::unbounded_channel();
         let (tx_sampling, mut rx_sampling) = mpsc::unbounded_channel();
-        let svc = GetAmbientConditionsImpl::new(
-            StubUc { tx: tx_primary },
-            StubUc { tx: tx_sampling },
-        );
+        let svc = GetAmbientConditionsImpl::new(StubUc { tx: tx_primary }, StubUc { tx: tx_sampling });
 
         let _ = svc.get_ambient_conditions(request(true)).await.unwrap();
         assert_eq!(rx_sampling.recv().await.unwrap(), "called");

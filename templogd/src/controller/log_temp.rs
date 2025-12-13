@@ -51,9 +51,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn controller_delegates_to_usecase_and_sends_operation() {
         let mut client = MockNatureRemoClient::new();
-        client
-            .expect_fetch_ambient_condition()
-            .returning(|| Ok(ambient_condition::new(1.0, 2.0, 3.0)));
+        client.expect_fetch_ambient_condition().returning(|| Ok(ambient_condition::new(1.0, 2.0, 3.0)));
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
         let token = CancellationToken::new();

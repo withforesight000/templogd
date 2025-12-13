@@ -57,13 +57,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn controller_delegates_fetch_operation() {
         let mut datastore = MockDataStore::new();
-        datastore
-            .expect_fetch_ambient_conditions()
-            .returning(|start: String, end: String| {
-                assert_eq!(start, "0");
-                assert_eq!(end, "1");
-                Ok(std::collections::HashMap::new())
-            });
+        datastore.expect_fetch_ambient_conditions().returning(|start: String, end: String| {
+            assert_eq!(start, "0");
+            assert_eq!(end, "1");
+            Ok(std::collections::HashMap::new())
+        });
 
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         let token = CancellationToken::new();

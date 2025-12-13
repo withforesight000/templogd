@@ -49,8 +49,8 @@ mod tests {
     use super::*;
     use common::model::ambient_condition;
     use mockall::mock;
-    use tokio::sync::mpsc;
     use redis::{RedisError, ToRedisArgs};
+    use tokio::sync::mpsc;
 
     mock! {
         pub DataStore {}
@@ -93,12 +93,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn saves_ambient_condition_and_stops_on_cancel() {
         let mut datastore = MockDataStore::new();
-        datastore
-            .expect_save_ambient_condition()
-            .returning(|cond| {
-                assert!((cond.get_temperature() - 1.0).abs() < f64::EPSILON);
-                Ok(redis::Value::Nil)
-            });
+        datastore.expect_save_ambient_condition().returning(|cond| {
+            assert!((cond.get_temperature() - 1.0).abs() < f64::EPSILON);
+            Ok(redis::Value::Nil)
+        });
 
         let (tx, rx) = mpsc::channel(1);
         let token = CancellationToken::new();
