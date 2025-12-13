@@ -71,3 +71,62 @@ impl GetAmbientConditions for GetAmbientConditionsWithSamplingUC {
         // Err(Status::unimplemented("Not implemented"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pbjson_types::Timestamp;
+    use tempgrpcd_protos::tempgrpcd::v1::GetAmbientConditionsRequest;
+    use tokio::sync::mpsc;
+    use tonic::Request;
+
+    #[tokio::test]
+    async fn forwards_sampling_request() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let uc = GetAmbientConditionsWithSamplingUC::new(tx);
+
+        let req = Request::new(GetAmbientConditionsRequest {
+            start_time: Some(Timestamp { seconds: 0, nanos: 0 }),
+            end_time: Some(Timestamp { seconds: 1, nanos: 0 }),
+            samples: Some(5),
+        });
+
+        let handle = tokio::spawn(async move {
+            if let Some(DatastoreOperation::FetchAmbientConditionsWithSampling { start, end, samples, resp }) = rx.recv().await {
+                assert_eq!(start, "0");
+                assert_eq!(end, "1");
+                assert_eq!(samples, "5");
+                let mut map = std::collections::HashMap::new();
+                map.insert("k".into(), common::model::ambient_condition::new(1.0, 2.0, 3.0));
+                resp.send(Ok(map)).unwrap();
+            } else {
+                panic!("no operation received");
+            }
+        });
+
+        let resp = uc.run(req).await.unwrap().into_inner();
+        assert_eq!(resp.ambient_conditions["k"].humidity, 2.0);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn panics_if_response_missing() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let uc = GetAmbientConditionsWithSamplingUC::new(tx);
+
+        let req = Request::new(GetAmbientConditionsRequest {
+            start_time: Some(Timestamp { seconds: 0, nanos: 0 }),
+            end_time: Some(Timestamp { seconds: 1, nanos: 0 }),
+            samples: Some(5),
+        });
+
+        tokio::spawn(async move {
+            if let Some(DatastoreOperation::FetchAmbientConditionsWithSampling { resp, .. }) = rx.recv().await {
+                drop(resp);
+            }
+        });
+
+        let _ = uc.run(req).await.unwrap();
+    }
+}

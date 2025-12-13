@@ -81,3 +81,23 @@ impl Logger for StdOutLogger {
         eprintln!("{}: error: {}", StdOutLogger::localtime(), message);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn localtime_formats_timestamp() {
+        let ts = StdOutLogger::localtime();
+        // Expect basic components to exist
+        assert!(ts.contains(":"));
+        assert!(ts.len() >= 10);
+    }
+
+    #[test]
+    fn stdout_logger_writes_without_panic() {
+        let mut logger = StdOutLogger::new();
+        logger.info("hello");
+        logger.error("oops");
+    }
+}

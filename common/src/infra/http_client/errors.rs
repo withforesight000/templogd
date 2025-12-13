@@ -39,3 +39,16 @@ impl fmt::Display for ClientError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_status_code_error() {
+        let err = ClientError::StatusCodeError(reqwest::StatusCode::BAD_REQUEST, "oops".into());
+        let msg = format!("{}", err);
+        assert!(msg.contains("400"));
+        assert!(msg.contains("oops"));
+    }
+}

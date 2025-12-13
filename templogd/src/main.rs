@@ -40,3 +40,30 @@ async fn main() {
     infra::tasks::run(config).await;
     info!("exiting...");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TemplogdArgs;
+    use clap::Parser;
+
+    #[test]
+    fn parses_cli_arguments() {
+        let args = TemplogdArgs::try_parse_from([
+            "templogd",
+            "--api-token",
+            "the-token",
+            "--device-id",
+            "device",
+            "--redis-host",
+            "127.0.0.1",
+            "--redis-port",
+            "6380",
+        ])
+        .unwrap();
+
+        assert_eq!(args.api_token, "the-token");
+        assert_eq!(args.device_id, "device");
+        assert_eq!(args.redis_host, "127.0.0.1");
+        assert_eq!(args.redis_port, 6380);
+    }
+}

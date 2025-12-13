@@ -70,3 +70,94 @@ impl HttpClient for ReqwestClient {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infra::http_client::errors::ClientError;
+    use httpmock::{Method, MockServer};
+    use std::net::TcpListener;
+    use serde_json::json;
+
+    fn can_bind_localhost() -> bool {
+        match TcpListener::bind(("127.0.0.1", 0)) {
+            Ok(listener) => {
+                drop(listener);
+                true
+            }
+            Err(err) => {
+                eprintln!("Skipping HTTP client test because binding to localhost failed: {}", err);
+                false
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn get_with_bearer_token_returns_json_body() {
+        if !can_bind_localhost() {
+            return;
+        }
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::GET).path("/devices").header("Authorization", "Bearer token");
+            then.status(200).json_body(json!({"ok": true}));
+        });
+
+        let client = ReqwestClient::new();
+        let result = client.get_with_bearer_token(&format!("{}/devices", server.base_url()), "token").await;
+
+        assert_eq!(result.unwrap()["ok"], true);
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_with_bearer_token_handles_status_error() {
+        if !can_bind_localhost() {
+            return;
+        }
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(Method::GET).path("/fail");
+            then.status(500).body("boom");
+        });
+
+        let client = ReqwestClient::new();
+        let err = client
+            .get_with_bearer_token(&format!("{}/fail", server.base_url()), "token")
+            .await
+            .unwrap_err();
+
+        let client_err = err.downcast::<ClientError>().unwrap();
+        match *client_err {
+            ClientError::StatusCodeError(status, ref body) => {
+                assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(body, "boom");
+            }
+            _ => panic!("unexpected error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_with_bearer_token_handles_body_error() {
+        if !can_bind_localhost() {
+            return;
+        }
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(Method::GET).path("/invalid-json");
+            then.status(200).body("not-json");
+        });
+
+        let client = ReqwestClient::new();
+        let err = client
+            .get_with_bearer_token(&format!("{}/invalid-json", server.base_url()), "token")
+            .await
+            .unwrap_err();
+
+        let client_err = err.downcast::<ClientError>().unwrap();
+        match *client_err {
+            ClientError::BodyError(_) => {}
+            _ => panic!("expected body error"),
+        }
+    }
+}

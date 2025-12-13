@@ -57,7 +57,7 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::Config;
+    use super::*;
 
     impl Default for Config {
         fn default() -> Self {
@@ -69,5 +69,33 @@ mod tests {
                 redis_port: 0,
             }
         }
+    }
+
+    fn args() -> crate::TempgrpcdArgs {
+        crate::TempgrpcdArgs {
+            server_bind_address: "0.0.0.0".into(),
+            server_port: "50051".into(),
+            bearer_token: "token".into(),
+            redis_host: "localhost".into(),
+            redis_port: 6379,
+        }
+    }
+
+    #[test]
+    fn getters_return_values() {
+        let cfg = super::new(args());
+        assert_eq!(cfg.get_server_bind_address(), "0.0.0.0");
+        assert_eq!(cfg.get_server_port(), "50051");
+        assert_eq!(cfg.get_bearer_token(), "token");
+        assert_eq!(cfg.get_redis_host(), "localhost");
+        assert_eq!(cfg.get_redis_port(), 6379);
+    }
+
+    #[test]
+    fn debug_masks_bearer_token() {
+        let cfg = super::new(args());
+        let debug = format!("{:?}", cfg.as_ref());
+        assert!(debug.contains("<MASKED>"));
+        assert!(!debug.contains(": \"token\""));
     }
 }

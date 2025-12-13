@@ -62,4 +62,31 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn getters_return_values() {
+        let cfg = Config {
+            api_token: "a".into(),
+            device_id: "d".into(),
+            redis_host: "h".into(),
+            redis_port: 42,
+        };
+        assert_eq!(cfg.get_api_token(), "a");
+        assert_eq!(cfg.get_device_id(), "d");
+        assert_eq!(cfg.get_redis_host(), "h");
+        assert_eq!(cfg.get_redis_port(), 42);
+    }
+
+    #[test]
+    fn debug_masks_api_token() {
+        let cfg = Config {
+            api_token: "secret-token".into(),
+            device_id: "d".into(),
+            redis_host: "h".into(),
+            redis_port: 42,
+        };
+        let debug = format!("{:?}", cfg);
+        assert!(debug.contains("<MASKED>"));
+        assert!(!debug.contains("secret-token"));
+    }
 }

@@ -9,8 +9,6 @@ edition = "2024"
 async-trait = "0.1"
 chrono = "0.4"
 cfg-if = "1.0"
-mockall = { version = "0.13" }
-mockall_double = { version = "0.3" }
 nix = { version = "0.30", features = ["fs"] }
 redis = { version = "0.32", features = ["connection-manager", "tokio-comp", "streams"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
@@ -21,3 +19,7 @@ tokio = { version = "1.47", features = ["full"] }
 tracing = "0.1"
 
 [dev-dependencies]
+httpmock = "0.7"
+mockall = { version = "0.13" }
+mockall_double = { version = "0.3" }
+tokio = { version = "1.47", features = ["full"] }

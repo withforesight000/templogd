@@ -80,3 +80,96 @@ impl<T: HttpClient + Sync> NatureRemo for NatureRemoClient<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::mock;
+    use serde_json::json;
+
+    mock! {
+        #[derive(Debug)]
+        pub HttpClient {}
+
+        #[async_trait::async_trait]
+        impl HttpClient for HttpClient {
+            async fn get_with_bearer_token(
+                &self,
+                url: &str,
+                bearer_token: &str,
+            ) -> Result<Value, Box<dyn std::error::Error + Send>>;
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_ambient_condition_returns_device_match() {
+        let mut http = MockHttpClient::new();
+        http.expect_get_with_bearer_token().returning(|url, token| {
+            assert!(url.contains("/1/devices"));
+            assert_eq!(token, "api-token");
+            Ok(json!([
+                {
+                    "id": "device-1",
+                    "newest_events": {
+                        "te": {"val": 21.0},
+                        "hu": {"val": 44.0},
+                        "il": {"val": 88.0}
+                    }
+                },
+                {
+                    "id": "target-device",
+                    "newest_events": {
+                        "te": {"val": 22.5},
+                        "hu": {"val": 50.5},
+                        "il": {"val": 99.0}
+                    }
+                }
+            ]))
+        });
+
+        let client = NatureRemoClient::new(
+            http,
+            "api-token".to_string(),
+            "https://example".to_string(),
+            "target-device".to_string(),
+        );
+
+        let condition = client.fetch_ambient_condition().await.unwrap();
+        assert!((condition.get_temperature() - 22.5).abs() < f64::EPSILON);
+        assert!((condition.get_humidity() - 50.5).abs() < f64::EPSILON);
+        assert!((condition.get_illumination() - 99.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn fetch_ambient_condition_forwards_error() {
+        let mut http = MockHttpClient::new();
+        http.expect_get_with_bearer_token()
+            .returning(|_, _| Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "boom"))));
+
+        let client = NatureRemoClient::new(
+            http,
+            "api-token".to_string(),
+            "https://example".to_string(),
+            "target-device".to_string(),
+        );
+
+        let result = client.fetch_ambient_condition().await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn debug_does_not_expose_token() {
+        let http = MockHttpClient::new();
+        let client = NatureRemoClient::new(
+            http,
+            "secret-token".to_string(),
+            "https://example".to_string(),
+            "target-device".to_string(),
+        );
+
+        let debug = format!("{:?}", client);
+        assert!(debug.contains("https://example"));
+        assert!(debug.contains("<MASKED>"));
+        assert!(!debug.contains(": \"secret-token\""));
+    }
+}
