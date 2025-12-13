@@ -188,7 +188,7 @@ mod tests {
         async fn fetch_ambient_condition(
             &self,
         ) -> Result<common::model::ambient_condition::AmbientCondition, Box<dyn std::error::Error + Send>> {
-            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "no-op")))
+            Err(Box::new(std::io::Error::other("no-op")))
         }
     }
 

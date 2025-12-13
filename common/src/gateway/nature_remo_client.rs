@@ -143,8 +143,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_ambient_condition_forwards_error() {
         let mut http = MockHttpClient::new();
-        http.expect_get_with_bearer_token()
-            .returning(|_, _| Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "boom"))));
+        http.expect_get_with_bearer_token().returning(|_, _| Err(Box::new(std::io::Error::other("boom"))));
 
         let client = NatureRemoClient::new(
             http,

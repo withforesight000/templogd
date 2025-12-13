@@ -113,9 +113,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn does_not_send_when_fetch_fails() {
         let mut client = MockNatureRemoClient::new();
-        client
-            .expect_fetch_ambient_condition()
-            .returning(|| Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "fail"))));
+        client.expect_fetch_ambient_condition().returning(|| Err(Box::new(std::io::Error::other("fail"))));
 
         let (tx, mut rx) = mpsc::channel(1);
         let token = CancellationToken::new();
