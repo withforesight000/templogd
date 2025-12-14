@@ -12,10 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Add rustfmt
         run: rustup component add rustfmt
       - name: Check formatting
@@ -24,59 +22,34 @@ jobs:
   clippy:
     name: Run clippy
     runs-on: ubuntu-latest
-    needs: fmt
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Add clippy
         run: rustup component add clippy
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-  test:
-    name: Run tests
+  test_coverage:
+    name: Run tests and coverage
     runs-on: ubuntu-latest
-    needs: clippy
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler pkg-config libssl-dev
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: cargo-bins/cargo-binstall@main
       - name: Run tests
         run: cargo test --workspace --all-features --no-fail-fast
-
-  build_release:
-    name: Build release
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler pkg-config libssl-dev
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - name: Build release
-        run: cargo build --workspace --release
+      - name: Install LLVM (for coverage)
+        run: sudo apt-get update && sudo apt-get install -y llvm clang lld
+      - name: Install cargo-llvm-cov
+        run: cargo binstall cargo-llvm-cov --locked --force --no-confirm
+      - name: Generate coverage (lcov)
+        run: cargo llvm-cov --workspace --no-clean
+      - name: Print human-readable coverage summary
+        run: cargo llvm-cov --workspace --no-clean --text --show-missing-lines || true
