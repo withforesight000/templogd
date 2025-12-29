@@ -2510,6 +2510,7 @@ dependencies = [
  "async-trait",
  "clap",
  "common",
+ "itoa",
  "mockall",
  "pbjson-types",
  "prost 0.14.1",

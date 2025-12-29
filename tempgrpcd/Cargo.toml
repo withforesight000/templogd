@@ -9,6 +9,7 @@ edition = "2024"
 askama = "0.14"
 clap = { version = "4.5", features = ["derive", "env"] }
 common = { path = "../common" }
+itoa = "1.0"
 prost = "0.14"
 redis = { version = "0.32", features = ["connection-manager", "tokio-comp", "streams"] }
 scopeguard = "1.2"

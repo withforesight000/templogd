@@ -37,12 +37,17 @@ impl GetAmbientConditions for GetAmbientConditionsWithSamplingUC {
         let end = tempgrpcd_request.end_time;
         let samples = tempgrpcd_request.samples.unwrap();
 
+        let mut buffer = itoa::Buffer::new();
+        let start_str = buffer.format(start.unwrap().seconds).to_owned();
+        let end_str = buffer.format(end.unwrap().seconds).to_owned();
+        let samples_str = buffer.format(samples).to_owned();
+
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.tx
             .send(DatastoreOperation::FetchAmbientConditionsWithSampling {
-                start: start.unwrap().seconds.to_string(),
-                end: end.unwrap().seconds.to_string(),
-                samples: samples.to_string(),
+                start: start_str,
+                end: end_str,
+                samples: samples_str,
                 resp: resp_tx,
             })
             .await
@@ -52,20 +57,20 @@ impl GetAmbientConditions for GetAmbientConditionsWithSamplingUC {
         let ambient_conditions = resp_rx.await.unwrap().unwrap();
         debug!("Received ambient conditions with sampling: {:?}", ambient_conditions);
 
+        let mut proto_conditions = HashMap::with_capacity(ambient_conditions.len());
+        for (key, value) in ambient_conditions {
+            proto_conditions.insert(
+                key,
+                tempgrpcd_protos::tempgrpcd::v1::AmbientCondition {
+                    temperature: value.get_temperature() as f32,
+                    humidity: value.get_humidity() as f32,
+                    illumination: value.get_illumination() as f32,
+                },
+            );
+        }
+
         Ok(Response::new(GetAmbientConditionsResponse {
-            ambient_conditions: ambient_conditions
-                .into_iter()
-                .map(|(key, value)| {
-                    (
-                        key,
-                        tempgrpcd_protos::tempgrpcd::v1::AmbientCondition {
-                            temperature: value.get_temperature() as f32,
-                            humidity: value.get_humidity() as f32,
-                            illumination: value.get_illumination() as f32,
-                        },
-                    )
-                })
-                .collect::<HashMap<String, tempgrpcd_protos::tempgrpcd::v1::AmbientCondition>>(),
+            ambient_conditions: proto_conditions,
         }))
 
         // Err(Status::unimplemented("Not implemented"))

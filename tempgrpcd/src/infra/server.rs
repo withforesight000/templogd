@@ -34,16 +34,13 @@ pub const REDIS_XRANGE_WITH_SAMPLING: &str = "xrange_with_sampling";
 
 #[derive(Clone)]
 struct AuthInterceptor {
-    token: String,
+    token: MetadataValue<tonic::metadata::Ascii>,
 }
 
 impl Interceptor for AuthInterceptor {
     fn call(&mut self, req: Request<()>) -> Result<Request<()>, Status> {
-        let correct_bearer_token = format!("Bearer {}", self.token);
-        let token: MetadataValue<_> = correct_bearer_token.parse().unwrap();
-
         match req.metadata().get("authorization") {
-            Some(t) if token == t => Ok(req),
+            Some(t) if self.token == *t => Ok(req),
             _ => Err(Status::unauthenticated("No valid auth token")),
         }
     }
@@ -55,7 +52,8 @@ mod tests {
 
     #[test]
     fn interceptor_allows_valid_token() {
-        let mut interceptor = AuthInterceptor { token: "secret".into() };
+        let token = MetadataValue::try_from("Bearer secret").unwrap();
+        let mut interceptor = AuthInterceptor { token };
         let mut req = Request::new(());
         req.metadata_mut().insert("authorization", MetadataValue::try_from("Bearer secret").unwrap());
         assert!(interceptor.call(req).is_ok());
@@ -63,7 +61,8 @@ mod tests {
 
     #[test]
     fn interceptor_rejects_invalid_token() {
-        let mut interceptor = AuthInterceptor { token: "secret".into() };
+        let token = MetadataValue::try_from("Bearer secret").unwrap();
+        let mut interceptor = AuthInterceptor { token };
         let req = Request::new(());
         let err = interceptor.call(req).unwrap_err();
         assert_eq!(err.code(), tonic::Code::Unauthenticated);
@@ -203,12 +202,14 @@ async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation
         GetAmbientConditionsImpl<GetAmbientConditionsUC, GetAmbientConditionsWithSamplingUC>,
     >>().await;
 
+    let bearer_token = format!("Bearer {}", config.get_bearer_token());
+    let token = MetadataValue::try_from(bearer_token)
+        .expect("Invalid bearer token format");
+
     Server::builder()
         .add_service(TempgrpcdServiceServer::with_interceptor(
             ambient_condition_repository,
-            AuthInterceptor {
-                token: config.get_bearer_token().to_string(),
-            },
+            AuthInterceptor { token },
         ))
         .add_service(
             Builder::configure()
