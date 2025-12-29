@@ -40,9 +40,9 @@ impl GetAmbientConditions for GetAmbientConditionsWithSamplingUC {
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.tx
             .send(DatastoreOperation::FetchAmbientConditionsWithSampling {
-                start: start.unwrap().seconds.to_string(),
-                end: end.unwrap().seconds.to_string(),
-                samples: samples.to_string(),
+                start: itoa::Buffer::new().format(start.unwrap().seconds).to_owned(),
+                end: itoa::Buffer::new().format(end.unwrap().seconds).to_owned(),
+                samples: itoa::Buffer::new().format(samples).to_owned(),
                 resp: resp_tx,
             })
             .await
