@@ -96,19 +96,23 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
 }
 
 fn parse_ambient_conditions(values: &redis::Value) -> HashMap<String, AmbientConditionModel> {
-    let mut ambient_conditions = HashMap::new();
-    for value in values.as_sequence().unwrap() {
-        let seq = value.clone().into_sequence().unwrap();
-        let k: String = from_redis_value(&seq[0]).unwrap();
-        let v = seq[1].clone().into_sequence().unwrap();
-        ambient_conditions.insert(
-            k,
-            ambient_condition::new(
-                from_redis_value(&v[1]).unwrap(),
-                from_redis_value(&v[3]).unwrap(),
-                from_redis_value(&v[5]).unwrap(),
-            ),
-        );
+    let sequence = values.as_sequence().unwrap();
+    let mut ambient_conditions = HashMap::with_capacity(sequence.len());
+    
+    for value in sequence {
+        if let Some(seq) = value.as_sequence() {
+            let k: String = from_redis_value(&seq[0]).unwrap();
+            if let Some(v) = seq[1].as_sequence() {
+                ambient_conditions.insert(
+                    k,
+                    ambient_condition::new(
+                        from_redis_value(&v[1]).unwrap(),
+                        from_redis_value(&v[3]).unwrap(),
+                        from_redis_value(&v[5]).unwrap(),
+                    ),
+                );
+            }
+        }
     }
     ambient_conditions
 }
