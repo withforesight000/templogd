@@ -36,11 +36,15 @@ impl GetAmbientConditions for GetAmbientConditionsUC {
         let start = tempgrpcd_request.start_time;
         let end = tempgrpcd_request.end_time;
 
+        let mut buffer = itoa::Buffer::new();
+        let start_str = buffer.format(start.unwrap().seconds).to_owned();
+        let end_str = buffer.format(end.unwrap().seconds).to_owned();
+
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.tx
             .send(DatastoreOperation::FetchAmbientConditions {
-                start: itoa::Buffer::new().format(start.unwrap().seconds).to_owned(),
-                end: itoa::Buffer::new().format(end.unwrap().seconds).to_owned(),
+                start: start_str,
+                end: end_str,
                 resp: resp_tx,
             })
             .await
