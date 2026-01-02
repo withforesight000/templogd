@@ -56,6 +56,7 @@ jobs:
           provenance: false
           cache-from: type=gha,scope=templogd-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=templogd-${{ matrix.arch }}
+          pull: true
 
       - name: Build and push tempgrpcd
         uses: docker/build-push-action@v6
@@ -68,6 +69,7 @@ jobs:
           provenance: false
           cache-from: type=gha,scope=tempgrpcd-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=tempgrpcd-${{ matrix.arch }}
+          pull: true
 
   create-manifest:
     name: Create multi-arch manifests

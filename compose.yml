@@ -23,9 +23,9 @@ services:
     environment:
       - TEMPGRPCD_SERVER_BIND_ADDRESS=0.0.0.0
       - TEMPGRPCD_SERVER_PORT=50051
+      - TEMPGRPCD_BEARER_TOKEN=XXX
       - TEMPGRPCD_REDIS_HOST=redis
       - TEMPGRPCD_REDIS_PORT=6379
-      - RUST_BACKTRACE=1
     ports:
       - 50051:50051
 
