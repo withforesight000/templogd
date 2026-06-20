@@ -21,9 +21,15 @@ COPY . /src
 RUN cargo build --release
 
 FROM debian:trixie-slim AS templogd
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder "/src/target/release/templogd" "/usr/local/bin/templogd"
 CMD [ "/usr/local/bin/templogd" ]
 
 FROM debian:trixie-slim AS tempgrpcd
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder "/src/target/release/tempgrpcd" "/usr/local/bin/tempgrpcd"
 CMD [ "/usr/local/bin/tempgrpcd" ]
