@@ -99,14 +99,14 @@ fn parse_ambient_conditions(values: &redis::Value) -> HashMap<String, AmbientCon
     let mut ambient_conditions = HashMap::new();
     for value in values.as_sequence().unwrap() {
         let seq = value.clone().into_sequence().unwrap();
-        let k: String = from_redis_value(&seq[0]).unwrap();
+        let k: String = from_redis_value(seq[0].clone()).unwrap();
         let v = seq[1].clone().into_sequence().unwrap();
         ambient_conditions.insert(
             k,
             ambient_condition::new(
-                from_redis_value(&v[1]).unwrap(),
-                from_redis_value(&v[3]).unwrap(),
-                from_redis_value(&v[5]).unwrap(),
+                from_redis_value(v[1].clone()).unwrap(),
+                from_redis_value(v[3].clone()).unwrap(),
+                from_redis_value(v[5].clone()).unwrap(),
             ),
         );
     }
@@ -165,7 +165,7 @@ mod tests {
     }
 
     fn redis_err() -> RedisError {
-        RedisError::from((ErrorKind::IoError, "io"))
+        RedisError::from((ErrorKind::Io, "io"))
     }
 
     #[tokio::test]

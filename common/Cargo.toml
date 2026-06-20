@@ -10,8 +10,8 @@ async-trait = "0.1"
 chrono = "0.4"
 cfg-if = "1.0"
 nix = { version = "0.30", features = ["fs"] }
-redis = { version = "0.32", features = ["connection-manager", "tokio-comp", "streams"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+redis = { version = "1.2", features = ["connection-manager", "tokio-comp", "streams"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
 scopeguard = "1.2"
 serde_json = { version = "1.0" }
 syslog = "7.0"

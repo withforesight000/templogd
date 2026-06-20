@@ -6,11 +6,11 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-askama = "0.14"
+askama = "0.16"
 clap = { version = "4.5", features = ["derive", "env"] }
 common = { path = "../common" }
 prost = "0.14"
-redis = { version = "0.32", features = ["connection-manager", "tokio-comp", "streams"] }
+redis = { version = "1.2", features = ["connection-manager", "tokio-comp", "streams"] }
 scopeguard = "1.2"
 tempgrpcd-protos = { git = "https://github.com/withforesight000/protobuf-rust.git", package = "tempgrpcd-protos" }
 tokio = { version = "1.39", features = ["full"] }
@@ -20,13 +20,13 @@ tonic-health = "0.14"
 tonic-reflection = { version = "0.14", features = ["server"] }
 tracing = "0.1"
 json-subscriber = "0.2"
-prost-types = "0.13"
+prost-types = "0.14"
 pbjson-types = "0.8"
 
 [build-dependencies]
 tonic-build = "0.14"
 
 [dev-dependencies]
-mockall = "0.13"
+mockall = "0.14"
 tokio = { version = "1.39", features = ["full"] }
 async-trait = "0.1"

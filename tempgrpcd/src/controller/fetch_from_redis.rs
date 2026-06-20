@@ -22,7 +22,7 @@ mod tests {
     use super::*;
     use common::model::ambient_condition;
     use mockall::mock;
-    use redis::{RedisError, ToRedisArgs};
+    use redis::{RedisError, ToRedisArgs, Value};
     use tokio::sync::oneshot;
 
     mock! {
@@ -50,7 +50,7 @@ mod tests {
             async fn save_ambient_condition(
                 &mut self,
                 ambient_condition: ambient_condition::AmbientCondition,
-            ) -> Result<redis::Value, RedisError>;
+            ) -> Result<Value, RedisError>;
         }
     }
 

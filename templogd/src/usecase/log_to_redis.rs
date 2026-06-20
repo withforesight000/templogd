@@ -49,7 +49,7 @@ mod tests {
     use super::*;
     use common::model::ambient_condition;
     use mockall::mock;
-    use redis::{RedisError, ToRedisArgs};
+    use redis::{RedisError, ToRedisArgs, Value};
     use tokio::sync::mpsc;
 
     mock! {
@@ -77,7 +77,7 @@ mod tests {
             async fn save_ambient_condition(
                 &mut self,
                 ambient_condition: ambient_condition::AmbientCondition,
-            ) -> Result<redis::Value, RedisError>;
+            ) -> Result<Value, RedisError>;
         }
     }
 
@@ -95,7 +95,7 @@ mod tests {
         let mut datastore = MockDataStore::new();
         datastore.expect_save_ambient_condition().returning(|cond| {
             assert!((cond.get_temperature() - 1.0).abs() < f64::EPSILON);
-            Ok(redis::Value::Nil)
+            Ok(Value::Nil)
         });
 
         let (tx, rx) = mpsc::channel(1);
