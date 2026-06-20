@@ -20,10 +20,10 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . /src
 RUN cargo build --release
 
-FROM debian:bookworm-slim AS templogd
+FROM debian:trixie-slim AS templogd
 COPY --from=builder "/src/target/release/templogd" "/usr/local/bin/templogd"
 CMD [ "/usr/local/bin/templogd" ]
 
-FROM debian:bookworm-slim AS tempgrpcd
+FROM debian:trixie-slim AS tempgrpcd
 COPY --from=builder "/src/target/release/tempgrpcd" "/usr/local/bin/tempgrpcd"
 CMD [ "/usr/local/bin/tempgrpcd" ]
