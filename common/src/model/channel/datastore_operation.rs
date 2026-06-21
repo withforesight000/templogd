@@ -1,22 +1,24 @@
 use crate::model::ambient_condition::AmbientCondition;
 use crate::model::repository::datastore::DataStoreError;
 
+/// Work items that the Redis fetch loop receives over its MPSC channel.
 #[derive(Debug)]
 pub enum DatastoreOperation {
+    /// Ask the datastore worker to fetch ambient conditions from Redis.
     FetchAmbientConditions {
         start: String,
         end: String,
         resp: tokio::sync::oneshot::Sender<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>,
     },
+    /// Ask the datastore worker to fetch ambient conditions using Redis sampling.
     FetchAmbientConditionsWithSampling {
         start: String,
         end: String,
         samples: String,
         resp: tokio::sync::oneshot::Sender<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>,
     },
-    SaveAmbientCondition {
-        ambient_condition: AmbientCondition,
-    },
+    /// Persist one ambient condition reading to Redis.
+    SaveAmbientCondition { ambient_condition: AmbientCondition },
 }
 
 #[cfg(test)]

@@ -5,8 +5,10 @@ use redis::{RedisError, ToRedisArgs};
 
 use crate::model::ambient_condition::AmbientCondition as AmbientConditionModel;
 
+/// Errors returned by datastore-backed repository operations.
 #[derive(Debug, thiserror::Error)]
 pub enum DataStoreError {
+    /// The datastore could not complete the requested operation.
     #[error("data store operation failed: {0}")]
     Unavailable(String),
 }
@@ -19,12 +21,14 @@ impl From<RedisError> for DataStoreError {
 
 #[async_trait]
 pub trait DataStoreRepository {
+    /// Fetch ambient conditions between two Redis stream timestamps.
     async fn fetch_ambient_conditions<T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + Debug>(
         &mut self,
         start: T,
         end: T,
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError>;
 
+    /// Fetch ambient conditions between two Redis stream timestamps with sampling.
     async fn fetch_ambient_conditions_with_sampling<
         T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + Debug,
     >(
@@ -34,8 +38,9 @@ pub trait DataStoreRepository {
         samples: T,
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError>;
 
-    // save an ambient condition to redis
-    // TODO: fix method signature
+    /// Save one ambient condition to Redis.
+    ///
+    /// TODO: The return type should be narrowed once the repository contract is cleaned up.
     async fn save_ambient_condition(
         &mut self,
         ambient_condition: AmbientConditionModel,
