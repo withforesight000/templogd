@@ -5,6 +5,18 @@ use redis::{RedisError, ToRedisArgs};
 
 use crate::model::ambient_condition::AmbientCondition as AmbientConditionModel;
 
+#[derive(Debug, thiserror::Error)]
+pub enum DataStoreError {
+    #[error("data store operation failed: {0}")]
+    Unavailable(String),
+}
+
+impl From<RedisError> for DataStoreError {
+    fn from(error: RedisError) -> Self {
+        Self::Unavailable(error.to_string())
+    }
+}
+
 #[async_trait]
 pub trait DataStoreRepository {
     async fn fetch_ambient_conditions<T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + Debug>(

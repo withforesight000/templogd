@@ -1,21 +1,18 @@
 use crate::model::ambient_condition::AmbientCondition;
+use crate::model::repository::datastore::DataStoreError;
 
 #[derive(Debug)]
 pub enum DatastoreOperation {
     FetchAmbientConditions {
         start: String,
         end: String,
-        resp: tokio::sync::oneshot::Sender<
-            Result<std::collections::HashMap<String, AmbientCondition>, redis::RedisError>,
-        >,
+        resp: tokio::sync::oneshot::Sender<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>,
     },
     FetchAmbientConditionsWithSampling {
         start: String,
         end: String,
         samples: String,
-        resp: tokio::sync::oneshot::Sender<
-            Result<std::collections::HashMap<String, AmbientCondition>, redis::RedisError>,
-        >,
+        resp: tokio::sync::oneshot::Sender<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>,
     },
     SaveAmbientCondition {
         ambient_condition: AmbientCondition,
@@ -25,12 +22,12 @@ pub enum DatastoreOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use redis::RedisError;
     use tokio::sync::oneshot;
 
     #[tokio::test]
     async fn fetch_variant_carries_payloads() {
-        let (tx, rx) = oneshot::channel::<Result<std::collections::HashMap<String, AmbientCondition>, RedisError>>();
+        let (tx, rx) =
+            oneshot::channel::<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>();
         let op = DatastoreOperation::FetchAmbientConditions {
             start: "s".to_string(),
             end: "e".to_string(),
