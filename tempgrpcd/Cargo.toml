@@ -7,8 +7,10 @@ edition = "2024"
 
 [dependencies]
 askama = "0.16"
+async-trait = { workspace = true }
 clap = { workspace = true }
 common = { workspace = true }
+garde = { version = "0.23", features = ["derive"] }
 prost = "0.14"
 redis = { workspace = true }
 scopeguard = { workspace = true }
@@ -22,6 +24,7 @@ tracing = { workspace = true }
 json-subscriber = { workspace = true }
 prost-types = "0.14"
 pbjson-types = "0.8"
+thiserror = { workspace = true }
 
 [build-dependencies]
 tonic-build = "0.14"

@@ -1,11 +1,11 @@
+use common::model::ambient_condition::AmbientCondition;
 use common::model::channel::datastore_operation::DatastoreOperation;
 use scopeguard::defer;
 use std::collections::HashMap;
-use tempgrpcd_protos::tempgrpcd::v1::{GetAmbientConditionsRequest, GetAmbientConditionsResponse};
-use tonic::{Request, Response, Status};
 use tracing::{debug, info, instrument};
 
-use crate::controller::get_ambient_conditions::GetAmbientConditions;
+use crate::usecase::error::UsecaseError;
+use crate::usecase::port::GetAmbientConditionsWithSampling;
 
 #[derive(Debug)]
 pub struct GetAmbientConditionsWithSamplingUC {
@@ -22,74 +22,50 @@ impl GetAmbientConditionsWithSamplingUC {
     }
 }
 
-#[tonic::async_trait]
-impl GetAmbientConditions for GetAmbientConditionsWithSamplingUC {
+#[async_trait::async_trait]
+impl GetAmbientConditionsWithSampling for GetAmbientConditionsWithSamplingUC {
     #[instrument(parent = None)]
     async fn run(
         &self,
-        request: Request<GetAmbientConditionsRequest>,
-    ) -> Result<Response<GetAmbientConditionsResponse>, Status> {
+        start_time_seconds: i64,
+        end_time_seconds: i64,
+        samples: u64,
+    ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
         debug!("Started");
         defer! {debug!("Ended")}
-
-        let tempgrpcd_request = request.into_inner();
-        let start = tempgrpcd_request.start_time;
-        let end = tempgrpcd_request.end_time;
-        let samples = tempgrpcd_request.samples.unwrap();
 
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.tx
             .send(DatastoreOperation::FetchAmbientConditionsWithSampling {
-                start: start.unwrap().seconds.to_string(),
-                end: end.unwrap().seconds.to_string(),
+                start: start_time_seconds.to_string(),
+                end: end_time_seconds.to_string(),
                 samples: samples.to_string(),
                 resp: resp_tx,
             })
             .await
-            .unwrap();
+            .map_err(|_| UsecaseError::dependency_unavailable("ambient condition request channel closed"))?;
         info!("sent FetchAmbientConditions to fetch_from_redis task");
 
-        let ambient_conditions = resp_rx.await.unwrap().unwrap();
+        let ambient_conditions = resp_rx
+            .await
+            .map_err(|_| UsecaseError::dependency_unavailable("ambient condition response channel closed"))??;
         debug!("Received ambient conditions with sampling: {:?}", ambient_conditions);
 
-        Ok(Response::new(GetAmbientConditionsResponse {
-            ambient_conditions: ambient_conditions
-                .into_iter()
-                .map(|(key, value)| {
-                    (
-                        key,
-                        tempgrpcd_protos::tempgrpcd::v1::AmbientCondition {
-                            temperature: value.get_temperature() as f32,
-                            humidity: value.get_humidity() as f32,
-                            illumination: value.get_illumination() as f32,
-                        },
-                    )
-                })
-                .collect::<HashMap<String, tempgrpcd_protos::tempgrpcd::v1::AmbientCondition>>(),
-        }))
-
-        // Err(Status::unimplemented("Not implemented"))
+        Ok(ambient_conditions)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pbjson_types::Timestamp;
-    use tempgrpcd_protos::tempgrpcd::v1::GetAmbientConditionsRequest;
+    use crate::usecase::error::UsecaseError;
+    use common::model::repository::datastore::DataStoreError;
     use tokio::sync::mpsc;
-    use tonic::Request;
 
     #[tokio::test]
     async fn forwards_sampling_request() {
         let (tx, mut rx) = mpsc::channel(1);
         let uc = GetAmbientConditionsWithSamplingUC::new(tx);
-
-        let req = Request::new(GetAmbientConditionsRequest {
-            start_time: Some(Timestamp { seconds: 0, nanos: 0 }),
-            end_time: Some(Timestamp { seconds: 1, nanos: 0 }),
-            samples: Some(5),
-        });
 
         let handle = tokio::spawn(async move {
             if let Some(DatastoreOperation::FetchAmbientConditionsWithSampling {
@@ -110,22 +86,15 @@ mod tests {
             }
         });
 
-        let resp = uc.run(req).await.unwrap().into_inner();
-        assert_eq!(resp.ambient_conditions["k"].humidity, 2.0);
+        let resp = uc.run(0, 1, 5).await.unwrap();
+        assert_eq!(resp["k"].get_humidity(), 2.0);
         handle.await.unwrap();
     }
 
     #[tokio::test]
-    #[should_panic]
-    async fn panics_if_response_missing() {
+    async fn returns_channel_closed_if_response_missing() {
         let (tx, mut rx) = mpsc::channel(1);
         let uc = GetAmbientConditionsWithSamplingUC::new(tx);
-
-        let req = Request::new(GetAmbientConditionsRequest {
-            start_time: Some(Timestamp { seconds: 0, nanos: 0 }),
-            end_time: Some(Timestamp { seconds: 1, nanos: 0 }),
-            samples: Some(5),
-        });
 
         tokio::spawn(async move {
             if let Some(DatastoreOperation::FetchAmbientConditionsWithSampling { resp, .. }) = rx.recv().await {
@@ -133,6 +102,29 @@ mod tests {
             }
         });
 
-        let _ = uc.run(req).await.unwrap();
+        let err = uc.run(0, 1, 5).await.unwrap_err();
+
+        assert!(
+            matches!(err, UsecaseError::DependencyUnavailable(message) if message == "ambient condition response channel closed")
+        );
+    }
+
+    #[tokio::test]
+    async fn returns_storage_error_from_datastore() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let uc = GetAmbientConditionsWithSamplingUC::new(tx);
+
+        tokio::spawn(async move {
+            if let Some(DatastoreOperation::FetchAmbientConditionsWithSampling { resp, .. }) = rx.recv().await {
+                resp.send(Err(DataStoreError::Unavailable("redis unavailable".into()))).unwrap();
+            }
+        });
+
+        let err = uc.run(0, 1, 5).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            UsecaseError::Storage(DataStoreError::Unavailable(message)) if message == "redis unavailable"
+        ));
     }
 }

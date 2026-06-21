@@ -31,6 +31,7 @@ use crate::{
 use common::{gateway::datastore::DataStore, model::channel::datastore_operation::DatastoreOperation};
 
 pub const REDIS_XRANGE_WITH_SAMPLING: &str = "xrange_with_sampling";
+type TempgrpcdController = GetAmbientConditionsImpl<GetAmbientConditionsUC, GetAmbientConditionsWithSamplingUC>;
 
 #[derive(Clone)]
 struct AuthInterceptor {
@@ -196,16 +197,13 @@ async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation
 
     let get_ambient_conditions_uc = GetAmbientConditionsUC::new(tx.clone());
     let get_ambient_conditions_with_sampling_uc = GetAmbientConditionsWithSamplingUC::new(tx);
-    let ambient_condition_repository =
-        GetAmbientConditionsImpl::new(get_ambient_conditions_uc, get_ambient_conditions_with_sampling_uc);
+    let grpc_service = TempgrpcdController::new(get_ambient_conditions_uc, get_ambient_conditions_with_sampling_uc);
     let (reporter, health_server) = tonic_health::server::health_reporter();
-    reporter.set_serving::<TempgrpcdServiceServer<
-        GetAmbientConditionsImpl<GetAmbientConditionsUC, GetAmbientConditionsWithSamplingUC>,
-    >>().await;
+    reporter.set_serving::<TempgrpcdServiceServer<TempgrpcdController>>().await;
 
     Server::builder()
         .add_service(TempgrpcdServiceServer::with_interceptor(
-            ambient_condition_repository,
+            grpc_service,
             AuthInterceptor {
                 token: config.get_bearer_token().to_string(),
             },

@@ -5,6 +5,7 @@ mod config;
 mod controller;
 mod infra;
 mod usecase;
+mod validator;
 
 /// tempgrpcd
 #[derive(Parser, Debug)]
