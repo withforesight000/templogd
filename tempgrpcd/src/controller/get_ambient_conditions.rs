@@ -278,4 +278,43 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::Unavailable);
         assert_eq!(err.message(), "ambient condition request channel closed");
     }
+
+    #[tokio::test]
+    async fn maps_sampling_usecase_error_to_status() {
+        #[derive(Debug)]
+        struct NeverCalledPrimaryUc;
+
+        #[async_trait::async_trait]
+        impl GetAmbientConditions for NeverCalledPrimaryUc {
+            async fn run(
+                &self,
+                _start_time_seconds: i64,
+                _end_time_seconds: i64,
+            ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
+                panic!("should not be called");
+            }
+        }
+
+        #[derive(Debug)]
+        struct FailingSamplingUc;
+
+        #[async_trait::async_trait]
+        impl GetAmbientConditionsWithSampling for FailingSamplingUc {
+            async fn run(
+                &self,
+                _start_time_seconds: i64,
+                _end_time_seconds: i64,
+                _samples: u64,
+            ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
+                Err(UsecaseError::dependency_unavailable("sampling channel closed"))
+            }
+        }
+
+        let svc = GetAmbientConditionsImpl::new(NeverCalledPrimaryUc, FailingSamplingUc);
+
+        let err = svc.get_ambient_conditions(request(true)).await.unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::Unavailable);
+        assert_eq!(err.message(), "sampling channel closed");
+    }
 }

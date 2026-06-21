@@ -40,6 +40,14 @@ mod tests {
     }
 
     #[test]
+    fn maps_internal_error_to_internal_status() {
+        let status: Status = UsecaseError::Internal("unexpected failure".into()).into();
+
+        assert_eq!(status.code(), tonic::Code::Internal);
+        assert_eq!(status.message(), "unexpected failure");
+    }
+
+    #[test]
     fn maps_storage_error_without_exposing_details() {
         use common::model::repository::datastore::DataStoreError;
 

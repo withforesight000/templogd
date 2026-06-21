@@ -64,6 +64,7 @@ mod tests {
     use mockall::mock;
     use redis::{RedisError, ToRedisArgs, Value};
     use tokio::sync::oneshot;
+    use tokio_util::sync::CancellationToken;
 
     mock! {
         pub DataStore {}
@@ -142,6 +143,58 @@ mod tests {
         };
 
         let _ = tokio::join!(run_fut, send_and_cancel);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn propagates_datastore_errors_for_fetch_and_sampling_requests() {
+        let mut datastore = MockDataStore::new();
+        datastore.expect_fetch_ambient_conditions().returning(|s: String, e: String| {
+            assert_eq!(s, "0");
+            assert_eq!(e, "1");
+            Err(RedisError::from((redis::ErrorKind::Io, "fetch failed")))
+        });
+        datastore.expect_fetch_ambient_conditions_with_sampling().returning(|s: String, e: String, samples: String| {
+            assert_eq!(s, "0");
+            assert_eq!(e, "1");
+            assert_eq!(samples, "2");
+            Err(RedisError::from((redis::ErrorKind::Io, "sampling failed")))
+        });
+
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        let token = CancellationToken::new();
+        let run_fut = tokio::spawn(run(datastore, rx, token.clone()));
+
+        let (resp_tx1, resp_rx1) = oneshot::channel();
+        tx.send(DatastoreOperation::FetchAmbientConditions {
+            start: "0".into(),
+            end: "1".into(),
+            resp: resp_tx1,
+        })
+        .await
+        .unwrap();
+        let fetch_err = resp_rx1.await.unwrap().unwrap_err();
+        assert!(matches!(
+            fetch_err,
+            common::model::repository::datastore::DataStoreError::Unavailable(message) if message.contains("fetch failed")
+        ));
+
+        let (resp_tx2, resp_rx2) = oneshot::channel();
+        tx.send(DatastoreOperation::FetchAmbientConditionsWithSampling {
+            start: "0".into(),
+            end: "1".into(),
+            samples: "2".into(),
+            resp: resp_tx2,
+        })
+        .await
+        .unwrap();
+        let sampling_err = resp_rx2.await.unwrap().unwrap_err();
+        assert!(matches!(
+            sampling_err,
+            common::model::repository::datastore::DataStoreError::Unavailable(message) if message.contains("sampling failed")
+        ));
+
+        token.cancel();
+        run_fut.await.unwrap();
     }
 
     #[tokio::test(flavor = "current_thread")]
