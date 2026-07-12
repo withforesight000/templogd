@@ -4,6 +4,7 @@ use crate::usecase::error::UsecaseError;
 use crate::validator::error::ValidationError;
 
 impl From<UsecaseError> for Status {
+    /// Maps internal use-case failures to safe gRPC status values.
     fn from(error: UsecaseError) -> Self {
         match error {
             UsecaseError::DependencyUnavailable(message) => Status::unavailable(message),
@@ -14,6 +15,7 @@ impl From<UsecaseError> for Status {
 }
 
 impl From<ValidationError> for Status {
+    /// Converts a validation failure into an `InvalidArgument` status.
     fn from(error: ValidationError) -> Self {
         Status::invalid_argument(error.to_string())
     }

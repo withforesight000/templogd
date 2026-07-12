@@ -20,6 +20,7 @@ enum NatureRemoResponseError {
     InvalidAmbientMeasurements,
 }
 
+/// Retrieves the configured Nature Remo device's latest ambient readings.
 pub struct NatureRemoClient<T: HttpClient> {
     http_client: T,
     api_token: String,
@@ -38,6 +39,10 @@ impl<T: HttpClient + Debug> Debug for NatureRemoClient<T> {
 }
 
 impl<T: HttpClient> NatureRemoClient<T> {
+    /// Creates a Nature Remo gateway with the API endpoint and target device.
+    ///
+    /// The token and device ID are retained for requests but are excluded from
+    /// the gateway's debug representation and diagnostic messages.
     pub fn new(http_client: T, api_token: String, base_address: String, device_id: String) -> NatureRemoClient<T> {
         NatureRemoClient {
             http_client,

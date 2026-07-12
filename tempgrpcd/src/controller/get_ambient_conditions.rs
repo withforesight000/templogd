@@ -11,6 +11,7 @@ use crate::usecase::port::{GetAmbientConditions, GetAmbientConditionsWithSamplin
 use crate::validator::error::ValidationError;
 use crate::validator::get_ambient_conditions_request::ValidatedGetAmbientConditionsRequest;
 
+/// Validates gRPC requests, selects a use case, and maps domain readings to protobuf values.
 #[derive(Debug)]
 pub struct GetAmbientConditionsImpl<G: GetAmbientConditions, S: GetAmbientConditionsWithSampling> {
     get_ambient_conditions_uc: G,
@@ -18,6 +19,7 @@ pub struct GetAmbientConditionsImpl<G: GetAmbientConditions, S: GetAmbientCondit
 }
 
 impl<G: GetAmbientConditions + Debug, S: GetAmbientConditionsWithSampling + Debug> GetAmbientConditionsImpl<G, S> {
+    /// Creates a controller with plain and sampled ambient-condition use cases.
     pub fn new(get_ambient_conditions_uc: G, get_ambient_conditions_with_sampling: S) -> Self {
         Self {
             get_ambient_conditions_uc,

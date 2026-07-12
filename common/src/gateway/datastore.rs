@@ -9,16 +9,22 @@ use super::interface::redis::Redis;
 use crate::model::ambient_condition::{self, AmbientCondition as AmbientConditionModel};
 use crate::model::repository::datastore::DataStoreRepository;
 
+/// Adapts Redis operations to the datastore repository used by the services.
 #[derive(Debug)]
 pub struct DataStore<R: Redis + Send + Debug> {
     redis_client: R,
 }
 
 impl<R: Redis + Send + Debug> DataStore<R> {
+    /// Creates a datastore adapter around an already connected Redis client.
     pub async fn new(redis_client: R) -> Self {
         Self { redis_client }
     }
 
+    /// Loads or replaces the Redis sampling function used by tempgrpcd.
+    ///
+    /// The Lua source is supplied by the caller so startup can render the
+    /// configured function name before loading it into Redis.
     #[instrument(name = "redis.load_function_xrange_with_sampling", skip_all, err)]
     pub async fn load_function_xrange_with_sampling(&mut self, code: &str) -> Result<(), RedisError> {
         let res = self.redis_client.function_load(true, code).await;
@@ -112,6 +118,10 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
     }
 }
 
+/// Converts the Redis stream response into the domain model used by callers.
+///
+/// Redis stream entries are expected to contain an entry ID followed by the
+/// temperature, humidity, and illumination field pairs.
 fn parse_ambient_conditions(values: &redis::Value) -> HashMap<String, AmbientConditionModel> {
     let mut ambient_conditions = HashMap::new();
     for value in values.as_sequence().unwrap() {

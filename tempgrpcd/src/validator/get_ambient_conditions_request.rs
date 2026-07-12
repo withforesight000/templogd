@@ -4,7 +4,7 @@ use tempgrpcd_protos::tempgrpcd::v1::GetAmbientConditionsRequest;
 
 use crate::validator::error::ValidationError;
 
-/// Borrowed view of `GetAmbientConditionsRequest` with the fields needed for validation.
+/// Borrows only the request fields needed for validation before dispatch.
 #[derive(Debug, Validate)]
 pub struct ValidatedGetAmbientConditionsRequest<'a> {
     #[garde(required)]

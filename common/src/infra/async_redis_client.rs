@@ -66,11 +66,16 @@ impl RedisConnection for RealRedisConnection {
     }
 }
 
+/// Implements the shared Redis port using an asynchronous Redis connection.
 pub struct AsyncRedisCrateClient<C: RedisConnection = RealRedisConnection> {
     connection: C,
 }
 
 impl AsyncRedisCrateClient<RealRedisConnection> {
+    /// Opens a Redis connection manager for the supplied Redis URL.
+    ///
+    /// Startup configuration errors currently abort initialization because the
+    /// daemon cannot perform useful work without Redis.
     pub async fn new(host: &str) -> Self {
         let client = redis::Client::open(host).unwrap();
         let connection = ConnectionManager::new(client).await.unwrap();
@@ -81,6 +86,7 @@ impl AsyncRedisCrateClient<RealRedisConnection> {
 }
 
 impl<C: RedisConnection> AsyncRedisCrateClient<C> {
+    /// Builds a Redis client around a connection, primarily for in-process tests.
     pub fn new_with_connection(connection: C) -> Self {
         Self { connection }
     }

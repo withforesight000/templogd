@@ -11,6 +11,7 @@ pub mod errors;
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ERROR_BODY_PREVIEW_BYTES: usize = 512;
 
+/// Sends JSON HTTP requests with bounded failure diagnostics.
 #[derive(Debug)]
 pub struct ReqwestClient {
     client: reqwest::Client,
@@ -23,12 +24,14 @@ impl Default for ReqwestClient {
 }
 
 impl ReqwestClient {
+    /// Creates a client that applies the request timeout at each HTTP call.
     pub fn new() -> ReqwestClient {
         ReqwestClient {
             client: reqwest::Client::new(),
         }
     }
 
+    /// Converts an HTTP response into JSON while classifying status and body failures.
     #[instrument(name = "http.handle_response", skip_all, err)]
     async fn handle_response(response: reqwest::Response) -> Result<Value, ClientError> {
         let status = response.status();
@@ -41,6 +44,7 @@ impl ReqwestClient {
     }
 }
 
+/// Classifies errors raised while sending an HTTP request.
 fn classify_request_error(error: reqwest::Error) -> ClientError {
     if error.is_timeout() {
         ClientError::Timeout(error)
@@ -49,6 +53,7 @@ fn classify_request_error(error: reqwest::Error) -> ClientError {
     }
 }
 
+/// Classifies errors raised while decoding a successful HTTP response.
 fn classify_response_error(error: reqwest::Error) -> ClientError {
     if error.is_timeout() {
         ClientError::Timeout(error)
@@ -57,6 +62,7 @@ fn classify_response_error(error: reqwest::Error) -> ClientError {
     }
 }
 
+/// Keeps only a bounded, UTF-8-safe preview of an error response body.
 fn body_preview(body: &str) -> String {
     let bytes = body.as_bytes();
     let preview = &bytes[..bytes.len().min(MAX_ERROR_BODY_PREVIEW_BYTES)];

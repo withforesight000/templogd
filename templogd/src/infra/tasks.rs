@@ -14,6 +14,7 @@ use crate::{config::Config, controller};
 use common::infra::{async_redis_client::AsyncRedisCrateClient, http_client::ReqwestClient};
 use common::model::channel::datastore_operation::DatastoreOperation;
 
+/// Starts templogd's polling and Redis workers and coordinates shutdown.
 #[instrument(parent = None)]
 pub async fn run(config: Arc<Config>) {
     run_with(

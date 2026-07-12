@@ -4,6 +4,10 @@ use tracing::{debug, error, info, instrument};
 
 use common::model::channel::datastore_operation::DatastoreOperation;
 
+/// Receives datastore operations from gRPC use cases and returns Redis results.
+///
+/// The worker runs until cancellation and converts repository errors into the
+/// typed datastore errors carried by the response channels.
 #[instrument(name = "usecase.fetch_from_redis", skip_all)]
 pub async fn run(
     mut client: impl DataStoreRepository,

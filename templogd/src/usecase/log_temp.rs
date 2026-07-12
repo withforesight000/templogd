@@ -6,6 +6,7 @@ use tracing::{error, info, instrument};
 use crate::config::Config;
 use common::model::{channel::datastore_operation::DatastoreOperation, repository::nature_remo::NatureRemo};
 
+/// Polls Nature Remo and queues successful readings for persistence in Redis.
 #[instrument(name = "usecase.log_temp", skip_all)]
 pub async fn run(
     _config: Arc<Config>,

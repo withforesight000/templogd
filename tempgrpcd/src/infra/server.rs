@@ -74,6 +74,7 @@ mod tests {
     }
 }
 
+/// Starts the tempgrpcd server, Redis worker, and shutdown handling.
 #[instrument(parent = None)]
 pub async fn run(config: Arc<Config>) {
     run_with(
