@@ -39,7 +39,10 @@ impl<T: HttpClient> NatureRemoClient<T> {
     #[instrument(name = "nature_remo.get_devices", skip_all, err)]
     async fn get_devices(&self) -> Result<Value, Box<dyn Error + Send>> {
         let url = format!("{}/1/devices", self.base_address);
-        self.http_client.get_with_bearer_token(&url, self.api_token.as_str()).await
+        self.http_client
+            .get_with_bearer_token(&url, self.api_token.as_str())
+            .await
+            .map_err(|error| Box::new(error) as Box<dyn Error + Send>)
     }
 }
 
@@ -84,7 +87,20 @@ mod tests {
                 &self,
                 url: &str,
                 bearer_token: &str,
-            ) -> Result<Value, Box<dyn std::error::Error + Send>>;
+            ) -> Result<Value, crate::infra::http_client::errors::ClientError>;
+
+            async fn post_json(
+                &self,
+                url: &str,
+                body: &Value,
+            ) -> Result<Value, crate::infra::http_client::errors::ClientError>;
+
+            async fn get_with_header(
+                &self,
+                url: &str,
+                header_name: &str,
+                header_value: &str,
+            ) -> Result<Value, crate::infra::http_client::errors::ClientError>;
         }
     }
 
@@ -130,7 +146,12 @@ mod tests {
     #[tokio::test]
     async fn fetch_ambient_condition_forwards_error() {
         let mut http = MockHttpClient::new();
-        http.expect_get_with_bearer_token().returning(|_, _| Err(Box::new(std::io::Error::other("boom"))));
+        http.expect_get_with_bearer_token().returning(|_, _| {
+            Err(crate::infra::http_client::errors::ClientError::StatusCodeError(
+                reqwest::StatusCode::BAD_GATEWAY,
+                "boom".into(),
+            ))
+        });
 
         let client = NatureRemoClient::new(
             http,

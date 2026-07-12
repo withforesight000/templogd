@@ -15,6 +15,7 @@ reqwest = { workspace = true }
 scopeguard = { workspace = true }
 serde_json = { workspace = true }
 syslog = "7.0"
+thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
