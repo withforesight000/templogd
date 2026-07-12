@@ -7,7 +7,7 @@ impl From<UsecaseError> for Status {
     fn from(error: UsecaseError) -> Self {
         match error {
             UsecaseError::DependencyUnavailable(message) => Status::unavailable(message),
-            UsecaseError::Storage(_) => Status::internal("data store operation failed"),
+            UsecaseError::Storage(_) => Status::unavailable("data store operation failed"),
             UsecaseError::Internal(message) => Status::internal(message),
         }
     }
@@ -54,7 +54,7 @@ mod tests {
         let error = UsecaseError::from(DataStoreError::Unavailable("redis connection refused".into()));
         let status: Status = error.into();
 
-        assert_eq!(status.code(), tonic::Code::Internal);
+        assert_eq!(status.code(), tonic::Code::Unavailable);
         assert_eq!(status.message(), "data store operation failed");
     }
 }

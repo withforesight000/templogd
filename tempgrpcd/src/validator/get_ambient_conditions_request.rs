@@ -30,13 +30,13 @@ impl<'a> From<&'a GetAmbientConditionsRequest> for ValidatedGetAmbientConditions
 impl<'a> ValidatedGetAmbientConditionsRequest<'a> {
     /// Enforce request-specific business rules that are not covered by `garde`.
     ///
-    /// This checks that both timestamps exist, `start_time` is not after `end_time`,
-    /// and `samples`, when provided, is greater than zero.
+    /// This checks that both timestamps exist, `start_time` is not after `end_time`
+    /// including nanoseconds, and `samples`, when provided, is greater than zero.
     pub fn validate_business_rules(&self) -> Result<(), ValidationError> {
         let start = self.start_time.as_ref().ok_or_else(|| ValidationError::invalid("start_time is required"))?;
         let end = self.end_time.as_ref().ok_or_else(|| ValidationError::invalid("end_time is required"))?;
 
-        if start.seconds > end.seconds {
+        if (start.seconds, start.nanos) > (end.seconds, end.nanos) {
             return Err(ValidationError::invalid("start_time must be <= end_time"));
         }
 
@@ -122,6 +122,26 @@ mod tests {
         let req = request(
             Some(Timestamp { seconds: 20, nanos: 0 }),
             Some(Timestamp { seconds: 10, nanos: 0 }),
+            Some(3),
+        );
+
+        let validated = ValidatedGetAmbientConditionsRequest::from(&req);
+
+        let err = validated.validate_business_rules().unwrap_err();
+        assert!(matches!(err, ValidationError::Invalid(message) if message == "start_time must be <= end_time"));
+    }
+
+    #[test]
+    fn validate_business_rules_rejects_reversed_nanosecond_range() {
+        let req = request(
+            Some(Timestamp {
+                seconds: 20,
+                nanos: 500_000_000,
+            }),
+            Some(Timestamp {
+                seconds: 20,
+                nanos: 499_999_999,
+            }),
             Some(3),
         );
 

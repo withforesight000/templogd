@@ -40,7 +40,10 @@ impl GetAmbientConditionsWithSampling for GetAmbientConditionsWithSamplingUC {
             })
             .await
             .map_err(|_| UsecaseError::dependency_unavailable("ambient condition request channel closed"))?;
-        info!("sent FetchAmbientConditions to fetch_from_redis task");
+        info!(
+            operation = "redis.fetch_ambient_conditions_with_sampling",
+            "Redis sampling fetch queued"
+        );
 
         let ambient_conditions = resp_rx
             .await
