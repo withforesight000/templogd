@@ -8,7 +8,7 @@ use scopeguard::defer;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, instrument};
+use tracing::{Instrument, error, info, info_span, instrument};
 
 use crate::{config::Config, controller};
 use common::infra::{async_redis_client::AsyncRedisCrateClient, http_client::ReqwestClient};
@@ -70,11 +70,7 @@ async fn run_with<S, SFut, NProvider, NFactory, NClient, DProvider, DFactory, DF
     }
 }
 
-#[instrument(parent = None)]
 fn make_nature_remo_client_factory(config: Arc<Config>) -> impl Fn() -> NatureRemoClient<ReqwestClient> {
-    debug!("Started");
-    defer! {debug!("Ended")}
-
     move || {
         NatureRemoClient::new(
             ReqwestClient::new(),
@@ -85,13 +81,9 @@ fn make_nature_remo_client_factory(config: Arc<Config>) -> impl Fn() -> NatureRe
     }
 }
 
-#[instrument(parent = None)]
 fn make_redis_client_factory(
     config: Arc<Config>,
 ) -> impl Fn() -> Pin<Box<dyn Future<Output = DataStore<AsyncRedisCrateClient>> + Send>> {
-    debug!("Started");
-    defer! {debug!("Ended")}
-
     fn redis_client(url: String) -> Pin<Box<dyn Future<Output = DataStore<AsyncRedisCrateClient>> + Send>> {
         Box::pin(async move { DataStore::new(AsyncRedisCrateClient::new(&url).await).await })
     }
@@ -105,8 +97,6 @@ fn make_redis_client_factory(
     }
 }
 
-// TODO: remove skip(nature_remo_client)
-#[instrument(parent = None, skip(nature_remo_client))]
 fn start_nature_remo_api_task<R, T>(
     config: Arc<Config>,
     cancellation_token: CancellationToken,
@@ -117,17 +107,16 @@ where
     R: FnOnce() -> T + Send + 'static,
     T: NatureRemo + Send + 'static, // 具体的な型を指定
 {
-    debug!("Started");
-    defer! {debug!("Ended")}
-
-    tokio::spawn(async move {
-        let client = nature_remo_client();
-        controller::log_temp::run(config, client, tx, cancellation_token).await;
-    })
+    let task_span = info_span!("templogd.nature_remo_task");
+    tokio::spawn(
+        async move {
+            let client = nature_remo_client();
+            controller::log_temp::run(config, client, tx, cancellation_token).await;
+        }
+        .instrument(task_span),
+    )
 }
 
-// TODO: remove skip(redis_client)
-#[instrument(parent = None, skip(redis_client))]
 fn start_datastore_task<F, DFut, DClient>(
     config: Arc<Config>,
     cancellation_token: CancellationToken,
@@ -139,20 +128,17 @@ where
     DFut: Future<Output = DClient> + Send + 'static,
     DClient: DataStoreRepository + Send + 'static,
 {
-    debug!("Started");
-    defer! {debug!("Ended")}
-
-    tokio::spawn(async move {
-        let client = redis_client().await;
-        controller::log_to_redis::run(config, client, rx, cancellation_token).await;
-    })
+    let task_span = info_span!("templogd.redis_task");
+    tokio::spawn(
+        async move {
+            let client = redis_client().await;
+            controller::log_to_redis::run(config, client, rx, cancellation_token).await;
+        }
+        .instrument(task_span),
+    )
 }
 
-#[instrument(parent = None)]
 async fn make_signal_handlers(cancellation_token: CancellationToken) {
-    debug!("Started");
-    defer! {debug!("Ended")}
-
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("Failed to create SIGTERM signal listener");
 

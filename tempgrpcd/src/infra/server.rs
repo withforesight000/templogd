@@ -18,7 +18,7 @@ use tonic::{
     transport::{Server, server::Router},
 };
 use tonic_reflection::server::Builder;
-use tracing::{debug, info, instrument};
+use tracing::{Instrument, debug, info, info_span, instrument};
 
 use crate::{
     config::Config,
@@ -128,66 +128,65 @@ fn boxed_start_grpc_server_task(
     Box::pin(start_grpc_server_task(tx, config))
 }
 
-#[instrument(parent = None)]
 fn start_datastore_task(
     config: Arc<Config>,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) -> JoinHandle<()> {
-    debug!("Started");
-    defer! {debug!("Ended")}
+    let task_span = info_span!("tempgrpcd.redis_task");
+    tokio::spawn(
+        async move {
+            #[derive(Template)]
+            #[template(path = "xrange_with_sampling.lua.j2")]
+            struct XRANGEWithSamplingTemplate<'a> {
+                function_name: &'a str,
+            }
+            let xrange_with_sampling_code = XRANGEWithSamplingTemplate {
+                function_name: REDIS_XRANGE_WITH_SAMPLING,
+            }
+            .render()
+            .expect("Failed to render template");
 
-    tokio::spawn(async move {
-        #[derive(Template)]
-        #[template(path = "xrange_with_sampling.lua.j2")]
-        struct XRANGEWithSamplingTemplate<'a> {
-            function_name: &'a str,
+            let mut datastore_client = DataStore::new(
+                common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!(
+                    "redis://{}:{}",
+                    config.get_redis_host(),
+                    config.get_redis_port()
+                ))
+                .await,
+            )
+            .await;
+            datastore_client
+                .load_function_xrange_with_sampling(&xrange_with_sampling_code)
+                .await
+                .expect("Failed to load Lua script for xrange with sampling");
+            controller::fetch_from_redis::run(datastore_client, rx, cancellation_token).await
         }
-        let xrange_with_sampling_code = XRANGEWithSamplingTemplate {
-            function_name: REDIS_XRANGE_WITH_SAMPLING,
-        }
-        .render()
-        .expect("Failed to render template");
-
-        let mut datastore_client = DataStore::new(
-            common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!(
-                "redis://{}:{}",
-                config.get_redis_host(),
-                config.get_redis_port()
-            ))
-            .await,
-        )
-        .await;
-        datastore_client
-            .load_function_xrange_with_sampling(&xrange_with_sampling_code)
-            .await
-            .expect("Failed to load Lua script for xrange with sampling");
-        controller::fetch_from_redis::run(datastore_client, rx, cancellation_token).await
-    })
+        .instrument(task_span),
+    )
 }
 
-#[instrument(parent = None)]
 async fn start_signal_handler_task(cancellation_token: CancellationToken) {
-    debug!("Started");
-    defer! {debug!("Ended")}
-
     let mut sigterm = signal(SignalKind::terminate()).expect("Failed to create signal");
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = signal::ctrl_c() => {
-                info!("SIGINT received");
+    tokio::spawn(
+        async move {
+            tokio::select! {
+                _ = signal::ctrl_c() => {
+                    info!("SIGINT received");
 
-                cancellation_token.cancel();
-                // break;
-            },
-            _ = sigterm.recv() => {
-                info!("SIGTERM received");
+                    cancellation_token.cancel();
+                    // break;
+                },
+                _ = sigterm.recv() => {
+                    info!("SIGTERM received");
 
-                cancellation_token.cancel();
-                // break;
+                    cancellation_token.cancel();
+                    // break;
+                }
             }
         }
-    });
+        .instrument(info_span!("tempgrpcd.signal_handler_task")),
+    );
 }
 
 #[instrument(parent = None)]
