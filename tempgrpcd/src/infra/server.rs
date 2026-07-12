@@ -18,7 +18,7 @@ use tonic::{
     transport::{Server, server::Router},
 };
 use tonic_reflection::server::Builder;
-use tracing::{Instrument, debug, info, info_span, instrument};
+use tracing::{Instrument, debug, info, info_span, instrument, warn};
 
 use crate::{
     config::Config,
@@ -45,7 +45,10 @@ impl Interceptor for AuthInterceptor {
 
         match req.metadata().get("authorization") {
             Some(t) if token == t => Ok(req),
-            _ => Err(Status::unauthenticated("No valid auth token")),
+            _ => {
+                warn!("gRPC authentication failed");
+                Err(Status::unauthenticated("No valid auth token"))
+            }
         }
     }
 }
@@ -201,6 +204,14 @@ async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation
     reporter.set_serving::<TempgrpcdServiceServer<TempgrpcdController>>().await;
 
     Server::builder()
+        .trace_fn(|request| {
+            let trace_id = super::request_tracing::new_trace_id();
+            info_span!(
+                "grpc.request",
+                trace_id = %trace_id,
+                method = %request.uri().path(),
+            )
+        })
         .add_service(TempgrpcdServiceServer::with_interceptor(
             grpc_service,
             AuthInterceptor {

@@ -2742,6 +2742,7 @@ dependencies = [
  "tonic-health",
  "tonic-reflection",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
