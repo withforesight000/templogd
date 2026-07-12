@@ -26,7 +26,10 @@ impl GetAmbientConditionsWithSampling for GetAmbientConditionsWithSamplingUC {
         end_time_seconds: i64,
         samples: u64,
     ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
-        debug!(operation = "redis.fetch_ambient_conditions_with_sampling", "Redis sampling fetch queued");
+        debug!(
+            operation = "redis.fetch_ambient_conditions_with_sampling",
+            "Redis sampling fetch queued"
+        );
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.tx
             .send(DatastoreOperation::FetchAmbientConditionsWithSampling {

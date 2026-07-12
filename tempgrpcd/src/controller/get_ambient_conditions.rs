@@ -60,9 +60,7 @@ impl<
                     .run(start_time.seconds, end_time.seconds, unwrapped_sample)
                     .await?
             }
-            None => {
-                self.get_ambient_conditions_uc.run(start_time.seconds, end_time.seconds).await?
-            }
+            None => self.get_ambient_conditions_uc.run(start_time.seconds, end_time.seconds).await?,
         };
 
         Ok(Response::new(GetAmbientConditionsResponse {

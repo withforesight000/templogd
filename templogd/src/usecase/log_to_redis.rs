@@ -30,12 +30,12 @@ pub async fn run(
                         DatastoreOperation::FetchAmbientConditions { resp, .. } => {
                             let error = redis::RedisError::from((ErrorKind::InvalidClientConfig, "unsupported operation"));
                             error!(operation = "redis.fetch_ambient_conditions", "Received unsupported operation in templogd Redis worker");
-                            let _ = resp.send(Err(error));
+                            let _ = resp.send(Err(error.into()));
                         }
                         DatastoreOperation::FetchAmbientConditionsWithSampling { resp, .. } => {
                             let error = redis::RedisError::from((ErrorKind::InvalidClientConfig, "unsupported operation"));
                             error!(operation = "redis.fetch_ambient_conditions_with_sampling", "Received unsupported operation in templogd Redis worker");
-                            let _ = resp.send(Err(error));
+                            let _ = resp.send(Err(error.into()));
                         }
                     }
                 }
