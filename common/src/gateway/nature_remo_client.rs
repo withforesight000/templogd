@@ -3,11 +3,22 @@ use std::fmt::{self, Debug, Formatter};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use thiserror::Error;
 use tracing::{debug, error, instrument};
 
 use crate::gateway::interface::http_client::HttpClient;
 use crate::model::ambient_condition::{self, AmbientCondition as AmbientConditionModel};
 use crate::model::repository::nature_remo::NatureRemo;
+
+#[derive(Debug, Error)]
+enum NatureRemoResponseError {
+    #[error("Nature Remo response did not contain a device list")]
+    InvalidDeviceList,
+    #[error("Nature Remo response did not contain the requested device")]
+    DeviceNotFound,
+    #[error("Nature Remo device response did not contain valid ambient measurements")]
+    InvalidAmbientMeasurements,
+}
 
 pub struct NatureRemoClient<T: HttpClient> {
     http_client: T,
@@ -44,28 +55,59 @@ impl<T: HttpClient> NatureRemoClient<T> {
             .await
             .map_err(|error| Box::new(error) as Box<dyn Error + Send>)
     }
+
+    /// Parses the configured device's three ambient measurements without panicking on malformed API data.
+    fn parse_ambient_condition(&self, devices: &Value) -> Result<AmbientConditionModel, NatureRemoResponseError> {
+        let device = devices
+            .as_array()
+            .ok_or(NatureRemoResponseError::InvalidDeviceList)?
+            .iter()
+            .find(|device| device.get("id").and_then(Value::as_str) == Some(self.device_id.as_str()))
+            .ok_or(NatureRemoResponseError::DeviceNotFound)?;
+
+        let temperature =
+            device.get("newest_events").and_then(|events| events.get("te")).and_then(|event| event.get("val"));
+        let humidity =
+            device.get("newest_events").and_then(|events| events.get("hu")).and_then(|event| event.get("val"));
+        let illumination =
+            device.get("newest_events").and_then(|events| events.get("il")).and_then(|event| event.get("val"));
+
+        match (
+            temperature.and_then(Value::as_f64),
+            humidity.and_then(Value::as_f64),
+            illumination.and_then(Value::as_f64),
+        ) {
+            (Some(temperature), Some(humidity), Some(illumination)) => {
+                Ok(ambient_condition::new(temperature, humidity, illumination))
+            }
+            _ => Err(NatureRemoResponseError::InvalidAmbientMeasurements),
+        }
+    }
 }
 
 #[async_trait]
 impl<T: HttpClient + Sync> NatureRemo for NatureRemoClient<T> {
     #[instrument(name = "nature_remo.fetch_ambient_condition", skip_all, err)]
     async fn fetch_ambient_condition(&self) -> Result<AmbientConditionModel, Box<dyn Error + Send>> {
-        let devices = self.get_devices().await;
-        match devices {
-            Ok(devices) => {
-                debug!("Received device data from Nature Remo");
-                // find a hashmap with the key "id" that has the value of device_id
-                let device =
-                    devices.as_array().unwrap().iter().find(|d| d["id"].as_str().unwrap() == self.device_id).unwrap();
-                Ok(ambient_condition::new(
-                    device["newest_events"]["te"]["val"].as_f64().unwrap(),
-                    device["newest_events"]["hu"]["val"].as_f64().unwrap(),
-                    device["newest_events"]["il"]["val"].as_f64().unwrap(),
-                ))
-            }
+        let devices = match self.get_devices().await {
+            Ok(devices) => devices,
             Err(error) => {
                 error!(error = %error, operation = "nature_remo.get_devices", "Nature Remo device request failed");
-                Err(error)
+                return Err(error);
+            }
+        };
+
+        match self.parse_ambient_condition(&devices) {
+            Ok(condition) => {
+                debug!(
+                    operation = "nature_remo.parse_ambient_condition",
+                    "Nature Remo device data parsed"
+                );
+                Ok(condition)
+            }
+            Err(error) => {
+                error!(error = %error, operation = "nature_remo.parse_ambient_condition", "Nature Remo device data was invalid");
+                Err(Box::new(error))
             }
         }
     }
@@ -162,6 +204,46 @@ mod tests {
 
         let result = client.fetch_ambient_condition().await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_device_list() {
+        let client = NatureRemoClient::new(
+            MockHttpClient::new(),
+            "api-token".to_string(),
+            "https://example".to_string(),
+            "target-device".to_string(),
+        );
+
+        let error = client.parse_ambient_condition(&json!({"devices": []})).unwrap_err();
+        assert!(matches!(error, NatureRemoResponseError::InvalidDeviceList));
+    }
+
+    #[test]
+    fn rejects_missing_device() {
+        let client = NatureRemoClient::new(
+            MockHttpClient::new(),
+            "api-token".to_string(),
+            "https://example".to_string(),
+            "target-device".to_string(),
+        );
+
+        let error = client.parse_ambient_condition(&json!([])).unwrap_err();
+        assert!(matches!(error, NatureRemoResponseError::DeviceNotFound));
+    }
+
+    #[test]
+    fn rejects_invalid_ambient_measurements() {
+        let client = NatureRemoClient::new(
+            MockHttpClient::new(),
+            "api-token".to_string(),
+            "https://example".to_string(),
+            "target-device".to_string(),
+        );
+        let devices = json!([{"id": "target-device", "newest_events": {"te": {"val": 22.5}}}]);
+
+        let error = client.parse_ambient_condition(&devices).unwrap_err();
+        assert!(matches!(error, NatureRemoResponseError::InvalidAmbientMeasurements));
     }
 
     #[test]
