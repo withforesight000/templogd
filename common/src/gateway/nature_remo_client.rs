@@ -3,7 +3,7 @@ use std::fmt::{self, Debug, Formatter};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tracing::{debug, info, instrument};
+use tracing::{debug, error, instrument};
 
 use crate::gateway::interface::http_client::HttpClient;
 use crate::model::ambient_condition::{self, AmbientCondition as AmbientConditionModel};
@@ -64,7 +64,7 @@ impl<T: HttpClient + Sync> NatureRemo for NatureRemoClient<T> {
                 ))
             }
             Err(error) => {
-                info!("Failed to get devices: {}", error);
+                error!(error = %error, operation = "nature_remo.get_devices", "Nature Remo device request failed");
                 Err(error)
             }
         }

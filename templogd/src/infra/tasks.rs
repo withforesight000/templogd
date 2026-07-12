@@ -62,9 +62,12 @@ async fn run_with<S, SFut, NProvider, NFactory, NClient, DProvider, DFactory, DF
     shutdown(cancellation_token.clone()).await;
 
     match tokio::try_join!(nature_remo_api_task, datastore_task) {
-        Ok(_) => info!("All tasks completed successfully"),
+        Ok(_) => info!(
+            tasks = "nature_remo,redis",
+            "All background tasks completed successfully"
+        ),
         Err(e) => {
-            error!("One of the tasks failed: {:?}", e);
+            error!(error = %e, "A background task failed");
             cancellation_token.cancel();
         }
     }
@@ -144,11 +147,11 @@ async fn make_signal_handlers(cancellation_token: CancellationToken) {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            info!("SIGINT received");
+            info!(signal = "SIGINT", "Shutdown signal received");
             cancellation_token.cancel();
         },
         _ = sigterm.recv() => {
-            info!("SIGTERM received");
+            info!(signal = "SIGTERM", "Shutdown signal received");
             cancellation_token.cancel();
         }
     }

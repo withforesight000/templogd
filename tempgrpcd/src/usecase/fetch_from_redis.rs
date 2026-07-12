@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn panics_on_save_operation() {
+    async fn ignores_save_operation_without_panicking() {
         let datastore = MockDataStore::new();
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         let token = CancellationToken::new();
@@ -214,8 +214,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Expect task to panic when hitting the SaveAmbientCondition arm
-        let join = handle.await;
-        assert!(join.is_err());
+        token.cancel();
+        handle.await.unwrap();
     }
 }

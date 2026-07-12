@@ -85,14 +85,15 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn panics_on_fetch_operation() {
+    async fn rejects_fetch_operation_without_panicking() {
         let datastore = MockDataStore::new();
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         let token = CancellationToken::new();
+        let token_for_task = token.clone();
 
-        let handle = tokio::spawn(run(config(), datastore, rx, token));
+        let handle = tokio::spawn(run(config(), datastore, rx, token_for_task));
 
-        let (resp_tx, _resp_rx) = tokio::sync::oneshot::channel();
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         tx.send(DatastoreOperation::FetchAmbientConditions {
             start: "0".into(),
             end: "1".into(),
@@ -101,19 +102,21 @@ mod tests {
         .await
         .unwrap();
 
-        let join = handle.await;
-        assert!(join.is_err());
+        assert!(resp_rx.await.unwrap().is_err());
+        token.cancel();
+        handle.await.unwrap();
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn panics_on_sampling_operation() {
+    async fn rejects_sampling_operation_without_panicking() {
         let datastore = MockDataStore::new();
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         let token = CancellationToken::new();
+        let token_for_task = token.clone();
 
-        let handle = tokio::spawn(run(config(), datastore, rx, token));
+        let handle = tokio::spawn(run(config(), datastore, rx, token_for_task));
 
-        let (resp_tx, _resp_rx) = tokio::sync::oneshot::channel();
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         tx.send(DatastoreOperation::FetchAmbientConditionsWithSampling {
             start: "0".into(),
             end: "1".into(),
@@ -123,7 +126,8 @@ mod tests {
         .await
         .unwrap();
 
-        let join = handle.await;
-        assert!(join.is_err());
+        assert!(resp_rx.await.unwrap().is_err());
+        token.cancel();
+        handle.await.unwrap();
     }
 }

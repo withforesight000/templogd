@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use common::model::repository::datastore::DataStoreRepository;
+use redis::ErrorKind;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, instrument};
+use tracing::{debug, error, info, instrument};
 
 use crate::config::Config;
 use common::model::channel::datastore_operation::DatastoreOperation;
@@ -17,23 +18,30 @@ pub async fn run(
     loop {
         tokio::select! {
             operation = rx.recv() => {
-                debug!("Received operation from Nature Remo task");
+                debug!(operation = "datastore_operation", "Received operation from Nature Remo task");
                 if let Some(operation) = operation {
                     match operation {
                         DatastoreOperation::SaveAmbientCondition { ambient_condition } => {
-                            let _ =client.save_ambient_condition(ambient_condition).await;
+                            match client.save_ambient_condition(ambient_condition).await {
+                                Ok(_) => info!(operation = "redis.save_ambient_condition", "Ambient condition saved to Redis"),
+                                Err(error) => error!(error = %error, operation = "redis.save_ambient_condition", "Failed to save ambient condition to Redis"),
+                            }
                         }
-                        DatastoreOperation::FetchAmbientConditions { start: _, end: _, resp: _ } => {
-                            panic!()
+                        DatastoreOperation::FetchAmbientConditions { resp, .. } => {
+                            let error = redis::RedisError::from((ErrorKind::InvalidClientConfig, "unsupported operation"));
+                            error!(operation = "redis.fetch_ambient_conditions", "Received unsupported operation in templogd Redis worker");
+                            let _ = resp.send(Err(error));
                         }
-                        DatastoreOperation::FetchAmbientConditionsWithSampling { start: _, end: _, samples: _, resp: _ } => {
-                            panic!()
+                        DatastoreOperation::FetchAmbientConditionsWithSampling { resp, .. } => {
+                            let error = redis::RedisError::from((ErrorKind::InvalidClientConfig, "unsupported operation"));
+                            error!(operation = "redis.fetch_ambient_conditions_with_sampling", "Received unsupported operation in templogd Redis worker");
+                            let _ = resp.send(Err(error));
                         }
                     }
                 }
             },
             _ = cancellation_token.cancelled() => {
-                info!("confirmed cancellation token was cancelled");
+                info!(reason = "cancellation_requested", "Redis worker stopped");
                 break;
             }
         }

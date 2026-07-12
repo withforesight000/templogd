@@ -24,11 +24,14 @@ impl<R: Redis + Send + Debug> DataStore<R> {
         let res = self.redis_client.function_load(true, code).await;
         match res {
             Ok(_) => {
-                info!("Loaded Lua function xrange_with_sampling");
+                info!(
+                    operation = "redis.function_load",
+                    "Loaded Lua function xrange_with_sampling"
+                );
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to load Lua script: {}", e);
+                error!(error = %e, operation = "redis.function_load", "Failed to load Lua function");
                 Err(e)
             }
         }
@@ -43,11 +46,20 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         start: T,
         end: T,
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError> {
-        let res: Result<redis::Value, RedisError> = self.redis_client.xrange("ambient_condition", start, end).await;
-        match res {
-            Ok(values) => Ok(parse_ambient_conditions(&values)),
-            Err(e) => Err(e),
+        let result = self
+            .redis_client
+            .xrange("ambient_condition", start, end)
+            .await
+            .map(|values| parse_ambient_conditions(&values));
+        match &result {
+            Ok(values) => info!(
+                operation = "redis.fetch_ambient_conditions",
+                count = values.len(),
+                "Redis fetch parsed"
+            ),
+            Err(error) => error!(error = %error, operation = "redis.fetch_ambient_conditions", "Redis fetch failed"),
         }
+        result
     }
 
     #[instrument(name = "redis.fetch_ambient_conditions_with_sampling", skip_all, err)]
@@ -57,12 +69,22 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         end: T,
         samples: T,
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError> {
-        let res: Result<redis::Value, RedisError> =
-            self.redis_client.fcall("xrange_with_sampling", &["ambient_condition"], &[start, end, samples]).await;
-        match res {
-            Ok(values) => Ok(parse_ambient_conditions(&values)),
-            Err(e) => Err(e),
+        let result = self
+            .redis_client
+            .fcall("xrange_with_sampling", &["ambient_condition"], &[start, end, samples])
+            .await
+            .map(|values| parse_ambient_conditions(&values));
+        match &result {
+            Ok(values) => info!(
+                operation = "redis.fetch_ambient_conditions_with_sampling",
+                count = values.len(),
+                "Redis sampling result parsed"
+            ),
+            Err(error) => {
+                error!(error = %error, operation = "redis.fetch_ambient_conditions_with_sampling", "Redis sampling fetch failed")
+            }
         }
+        result
     }
 
     #[instrument(name = "redis.save_ambient_condition", skip_all, err)]
@@ -79,7 +101,13 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         ];
 
         let res = self.redis_client.xadd(key, id, items.as_slice()).await;
-        info!(result = res.is_ok(), "Saved ambient condition to Redis");
+        match &res {
+            Ok(_) => info!(
+                operation = "redis.save_ambient_condition",
+                "Ambient condition saved to Redis"
+            ),
+            Err(error) => error!(error = %error, operation = "redis.save_ambient_condition", "Redis save failed"),
+        }
         res
     }
 }
