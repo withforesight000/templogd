@@ -3,8 +3,7 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 use redis::{RedisError, ToRedisArgs, from_redis_value};
-use scopeguard::defer;
-use tracing::{debug, error, info, instrument};
+use tracing::{error, info, instrument};
 
 use super::interface::redis::Redis;
 use crate::model::ambient_condition::{self, AmbientCondition as AmbientConditionModel};
@@ -16,20 +15,16 @@ pub struct DataStore<R: Redis + Send + Debug> {
 }
 
 impl<R: Redis + Send + Debug> DataStore<R> {
-    #[instrument(parent = None, skip(redis_client))]
     pub async fn new(redis_client: R) -> Self {
         Self { redis_client }
     }
 
-    #[instrument(parent = None)]
+    #[instrument(name = "redis.load_function_xrange_with_sampling", skip_all, err)]
     pub async fn load_function_xrange_with_sampling(&mut self, code: &str) -> Result<(), RedisError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
         let res = self.redis_client.function_load(true, code).await;
         match res {
-            Ok(script) => {
-                info!("Loaded Lua script for xrange_with_sampling: {}", script);
+            Ok(_) => {
+                info!("Loaded Lua function xrange_with_sampling");
                 Ok(())
             }
             Err(e) => {
@@ -42,15 +37,12 @@ impl<R: Redis + Send + Debug> DataStore<R> {
 
 #[async_trait]
 impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
-    #[instrument(parent = None)]
+    #[instrument(name = "redis.fetch_ambient_conditions", skip_all, err)]
     async fn fetch_ambient_conditions<T: ToRedisArgs + Send + Sync + 'static + Debug>(
         &mut self,
         start: T,
         end: T,
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
         let res: Result<redis::Value, RedisError> = self.redis_client.xrange("ambient_condition", start, end).await;
         match res {
             Ok(values) => Ok(parse_ambient_conditions(&values)),
@@ -58,16 +50,13 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         }
     }
 
-    #[instrument(parent = None)]
+    #[instrument(name = "redis.fetch_ambient_conditions_with_sampling", skip_all, err)]
     async fn fetch_ambient_conditions_with_sampling<T: ToRedisArgs + Send + Sync + 'static + Debug>(
         &mut self,
         start: T,
         end: T,
         samples: T,
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
         let res: Result<redis::Value, RedisError> =
             self.redis_client.fcall("xrange_with_sampling", &["ambient_condition"], &[start, end, samples]).await;
         match res {
@@ -76,7 +65,7 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         }
     }
 
-    #[instrument(parent = None)]
+    #[instrument(name = "redis.save_ambient_condition", skip_all, err)]
     async fn save_ambient_condition(
         &mut self,
         ambient_condition: AmbientConditionModel,
@@ -90,7 +79,7 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         ];
 
         let res = self.redis_client.xadd(key, id, items.as_slice()).await;
-        info!("Saved ambient condition to Redis: {:?}", res);
+        info!(result = res.is_ok(), "Saved ambient condition to Redis");
         res
     }
 }

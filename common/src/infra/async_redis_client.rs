@@ -3,8 +3,7 @@ use std::marker::{Send, Sync};
 
 use async_trait::async_trait;
 use redis::{AsyncCommands, RedisError, ToRedisArgs, Value, aio::ConnectionManager, cmd};
-use scopeguard::defer;
-use tracing::{debug, info, instrument};
+use tracing::{debug, instrument};
 
 use crate::gateway::interface::redis::Redis;
 
@@ -72,11 +71,7 @@ pub struct AsyncRedisCrateClient<C: RedisConnection = RealRedisConnection> {
 }
 
 impl AsyncRedisCrateClient<RealRedisConnection> {
-    #[instrument(parent = None)]
     pub async fn new(host: &str) -> Self {
-        info!("Started");
-        defer! {info!("Ended")}
-
         let client = redis::Client::open(host).unwrap();
         let connection = ConnectionManager::new(client).await.unwrap();
         Self {
@@ -93,15 +88,13 @@ impl<C: RedisConnection> AsyncRedisCrateClient<C> {
 
 #[async_trait]
 impl<C: RedisConnection> Redis for AsyncRedisCrateClient<C> {
+    #[instrument(name = "redis.fcall", skip_all, err)]
     async fn fcall<K: ToRedisArgs + Send + Sync + 'static, A: ToRedisArgs + Send + Sync + 'static>(
         &mut self,
         function_name: &str,
         keys: &[K],
         args: &[A],
     ) -> Result<Value, RedisError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
         let mut c = cmd("FCALL");
         c.arg(function_name).arg(keys.len()).arg(keys).arg(args);
 
@@ -111,10 +104,8 @@ impl<C: RedisConnection> Redis for AsyncRedisCrateClient<C> {
         })
     }
 
+    #[instrument(name = "redis.function_load", skip_all, err)]
     async fn function_load(&mut self, replace: bool, code: &str) -> Result<String, RedisError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
         let mut c = cmd("FUNCTION");
         c.arg("LOAD").arg(if replace { "REPLACE" } else { "" }).arg(code);
 
@@ -124,16 +115,13 @@ impl<C: RedisConnection> Redis for AsyncRedisCrateClient<C> {
         })
     }
 
-    #[instrument(parent = None, skip(self, items))]
+    #[instrument(name = "redis.xadd", skip_all, err)]
     async fn xadd<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
         &mut self,
         key: &str,
         id: &str,
         items: &[(T, U)],
     ) -> Result<Value, RedisError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
         self.connection.xadd(key, id, items).await
     }
 

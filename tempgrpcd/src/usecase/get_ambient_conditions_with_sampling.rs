@@ -1,6 +1,5 @@
 use common::model::ambient_condition::AmbientCondition;
 use common::model::channel::datastore_operation::DatastoreOperation;
-use scopeguard::defer;
 use std::collections::HashMap;
 use tracing::{debug, info, instrument};
 
@@ -13,27 +12,21 @@ pub struct GetAmbientConditionsWithSamplingUC {
 }
 
 impl GetAmbientConditionsWithSamplingUC {
-    #[instrument(parent = None)]
     pub fn new(tx: tokio::sync::mpsc::Sender<DatastoreOperation>) -> Self {
-        info!("Started");
-        defer! {info!("Ended")}
-
         Self { tx }
     }
 }
 
 #[async_trait::async_trait]
 impl GetAmbientConditionsWithSampling for GetAmbientConditionsWithSamplingUC {
-    #[instrument(parent = None)]
+    #[instrument(name = "usecase.get_ambient_conditions_with_sampling", skip_all, err)]
     async fn run(
         &self,
         start_time_seconds: i64,
         end_time_seconds: i64,
         samples: u64,
     ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
+        debug!(operation = "redis.fetch_ambient_conditions_with_sampling", "Redis sampling fetch queued");
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.tx
             .send(DatastoreOperation::FetchAmbientConditionsWithSampling {
@@ -49,7 +42,11 @@ impl GetAmbientConditionsWithSampling for GetAmbientConditionsWithSamplingUC {
         let ambient_conditions = resp_rx
             .await
             .map_err(|_| UsecaseError::dependency_unavailable("ambient condition response channel closed"))??;
-        debug!("Received ambient conditions with sampling: {:?}", ambient_conditions);
+        debug!(
+            operation = "redis.fetch_ambient_conditions_with_sampling",
+            count = ambient_conditions.len(),
+            "Redis sampling result received"
+        );
 
         Ok(ambient_conditions)
     }

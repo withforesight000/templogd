@@ -1,56 +1,60 @@
 use common::model::repository::datastore::DataStoreRepository;
-use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument};
 
 use common::model::channel::datastore_operation::DatastoreOperation;
 
-#[instrument(parent = None, skip(client))]
+#[instrument(name = "usecase.fetch_from_redis", skip_all)]
 pub async fn run(
     mut client: impl DataStoreRepository,
     mut rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
-    info!("Started");
-    defer! {info!("Ended")}
-
     loop {
         tokio::select! {
             operation = rx.recv() => {
-                debug!("Received operation from get_ambient_conditions task: {:?}", operation);
+                debug!(operation = "datastore_operation", "Received operation from gRPC request task");
                 if let Some(operation) = operation {
                     match operation {
                         DatastoreOperation::FetchAmbientConditions { start, end, resp } => {
                             let res = client.fetch_ambient_conditions(start, end).await.map_err(Into::into);
-                            info!("Fetched ambient conditions from Redis: {:?}", res);
+                            info!(
+                                operation = "redis.fetch_ambient_conditions",
+                                result = res.is_ok(),
+                                "Redis fetch completed"
+                            );
 
                             let result = resp.send(res);
                             if let Err(e) = result {
-                                    error!("Failed to send ambient conditions to get_ambient_conditions task: {:?}", e);
+                                error!(error = ?e, operation = "redis.fetch_ambient_conditions", "Failed to return Redis fetch result");
                             }
-                            info!("Sent ambient conditions to get_ambient_conditions task");
+                            debug!(operation = "redis.fetch_ambient_conditions", "Redis fetch result returned");
                         }
                         DatastoreOperation::FetchAmbientConditionsWithSampling { start, end, samples, resp } => {
                             let res = client
                                 .fetch_ambient_conditions_with_sampling(start, end, samples)
                                 .await
                                 .map_err(Into::into);
-                            info!("Fetched ambient conditions with sampling from Redis: {:?}", res);
+                            info!(
+                                operation = "redis.fetch_ambient_conditions_with_sampling",
+                                result = res.is_ok(),
+                                "Redis sampling fetch completed"
+                            );
 
                             let result = resp.send(res);
                             if let Err(e) = result {
-                                error!("Failed to send ambient conditions with sampling to get_ambient_conditions task: {:?}", e);
+                                error!(error = ?e, operation = "redis.fetch_ambient_conditions_with_sampling", "Failed to return Redis sampling result");
                             }
-                            info!("Sent ambient conditions with sampling to get_ambient_conditions task");
+                            debug!(operation = "redis.fetch_ambient_conditions_with_sampling", "Redis sampling result returned");
                         }
                         DatastoreOperation::SaveAmbientCondition { ambient_condition: _ } => {
-                            panic!()
+                            error!(operation = "redis.save_ambient_condition", "Received unsupported save operation in tempgrpcd Redis worker");
                         }
                     }
                 }
             },
             _ = cancellation_token.cancelled() => {
-                info!("confirmed cancellation token was cancelled");
+                info!(reason = "cancellation_requested", "Redis worker stopped");
                 break;
             }
         }

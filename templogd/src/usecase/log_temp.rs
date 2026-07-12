@@ -1,22 +1,18 @@
 use std::sync::Arc;
 
-use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, instrument};
 
 use crate::config::Config;
 use common::model::{channel::datastore_operation::DatastoreOperation, repository::nature_remo::NatureRemo};
 
-#[instrument(parent = None, skip(client))]
+#[instrument(name = "usecase.log_temp", skip_all)]
 pub async fn run(
-    config: Arc<Config>,
+    _config: Arc<Config>,
     client: impl NatureRemo,
     tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
-    info!("Started");
-    defer! {info!("Ended")}
-
     loop {
         let nature_remo_result = client.fetch_ambient_condition().await;
         let condition = match nature_remo_result {
@@ -35,7 +31,7 @@ pub async fn run(
                 condition.get_illumination()
             );
 
-            info!("Sending ambient condition to log_temp task: {:?}", condition);
+            info!("Sending ambient condition to Redis task");
             let result = tx
                 .send(DatastoreOperation::SaveAmbientCondition {
                     ambient_condition: condition,

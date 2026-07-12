@@ -1,12 +1,11 @@
 use std::fmt::Debug;
 
 use garde::Validate;
-use scopeguard::defer;
 use tempgrpcd_protos::tempgrpcd::v1::{
     AmbientCondition as ProtoAmbientCondition, GetAmbientConditionsResponse, tempgrpcd_service_server::TempgrpcdService,
 };
 use tonic::{Response, Status};
-use tracing::{debug, info, instrument};
+use tracing::{Span, field, instrument};
 
 use crate::usecase::port::{GetAmbientConditions, GetAmbientConditionsWithSampling};
 use crate::validator::error::ValidationError;
@@ -19,11 +18,7 @@ pub struct GetAmbientConditionsImpl<G: GetAmbientConditions, S: GetAmbientCondit
 }
 
 impl<G: GetAmbientConditions + Debug, S: GetAmbientConditionsWithSampling + Debug> GetAmbientConditionsImpl<G, S> {
-    #[instrument(parent = None)]
     pub fn new(get_ambient_conditions_uc: G, get_ambient_conditions_with_sampling: S) -> Self {
-        info!("Started");
-        defer! {info!("Ended")}
-
         Self {
             get_ambient_conditions_uc,
             get_ambient_conditions_with_sampling,
@@ -37,14 +32,19 @@ impl<
     S: GetAmbientConditionsWithSampling + Sync + Send + 'static + Debug,
 > TempgrpcdService for GetAmbientConditionsImpl<G, S>
 {
-    #[instrument(parent = None)]
+    #[instrument(
+        name = "grpc.get_ambient_conditions",
+        skip_all,
+        fields(samples = field::Empty, route = field::Empty),
+        err
+    )]
     async fn get_ambient_conditions(
         &self,
         request: tonic::Request<tempgrpcd_protos::tempgrpcd::v1::GetAmbientConditionsRequest>,
     ) -> Result<Response<GetAmbientConditionsResponse>, Status> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
+        let samples = request.get_ref().samples;
+        Span::current().record("samples", field::debug(samples));
+        Span::current().record("route", if samples.is_some() { "sampling" } else { "plain" });
         let validated_request: ValidatedGetAmbientConditionsRequest<'_> = request.get_ref().into();
         validated_request.validate().map_err(|error| ValidationError::invalid(format!("Validation error: {error}")))?;
         validated_request.validate_business_rules()?;
@@ -61,7 +61,6 @@ impl<
                     .await?
             }
             None => {
-                // Call the method for getting ambient conditions without sampling
                 self.get_ambient_conditions_uc.run(start_time.seconds, end_time.seconds).await?
             }
         };

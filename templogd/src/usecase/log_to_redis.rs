@@ -1,27 +1,23 @@
 use std::sync::Arc;
 
 use common::model::repository::datastore::DataStoreRepository;
-use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument};
 
 use crate::config::Config;
 use common::model::channel::datastore_operation::DatastoreOperation;
 
-#[instrument(parent = None, skip(client))]
+#[instrument(name = "usecase.log_to_redis", skip_all)]
 pub async fn run(
     _config: Arc<Config>,
     mut client: impl DataStoreRepository,
     mut rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
-    info!("Started");
-    defer! {info!("Ended")}
-
     loop {
         tokio::select! {
             operation = rx.recv() => {
-                debug!("Received operation from log_temp task: {:?}", operation);
+                debug!("Received operation from Nature Remo task");
                 if let Some(operation) = operation {
                     match operation {
                         DatastoreOperation::SaveAmbientCondition { ambient_condition } => {

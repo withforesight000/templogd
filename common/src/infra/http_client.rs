@@ -1,8 +1,7 @@
 use async_trait::async_trait;
 use reqwest::StatusCode;
-use scopeguard::defer;
 use serde_json::Value;
-use tracing::{debug, info, instrument};
+use tracing::instrument;
 
 use crate::gateway::interface::http_client::HttpClient;
 use crate::infra::http_client::errors::ClientError;
@@ -25,21 +24,14 @@ impl Default for ReqwestClient {
 }
 
 impl ReqwestClient {
-    #[instrument(parent = None)]
     pub fn new() -> ReqwestClient {
-        info!("Started");
-        defer! {info!("Ended")}
-
         ReqwestClient {
             client: reqwest::Client::new(),
         }
     }
 
-    #[instrument(parent = None)]
+    #[instrument(name = "http.handle_response", skip_all, err)]
     async fn handle_response(response: reqwest::Response) -> Result<Value, ClientError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
         match response.status() {
             StatusCode::OK => {
                 let body = response.json().await;
@@ -55,15 +47,12 @@ impl ReqwestClient {
 
 #[async_trait]
 impl HttpClient for ReqwestClient {
-    #[instrument(parent = None)]
+    #[instrument(name = "http.get_with_bearer_token", skip_all, err)]
     async fn get_with_bearer_token(
         &self,
         url: &str,
         bearer_token: &str,
     ) -> Result<Value, Box<dyn std::error::Error + Send>> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
         let response = self.client.get(url).header("Authorization", format!("Bearer {}", bearer_token)).send().await;
         match response {
             Ok(response) => match ReqwestClient::handle_response(response).await {
