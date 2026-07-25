@@ -31,7 +31,7 @@ mod tests {
         #[async_trait::async_trait]
         impl DataStoreRepository for DataStore {
             async fn fetch_ambient_conditions<
-                T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
+                T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
             >(
                 &mut self,
                 start: T,
@@ -39,7 +39,7 @@ mod tests {
             ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, RedisError>;
 
             async fn fetch_ambient_conditions_with_sampling<
-                T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
+                T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
             >(
                 &mut self,
                 start: T,

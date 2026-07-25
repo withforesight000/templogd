@@ -48,7 +48,8 @@ pub async fn run(
                     "Ambient condition queued for Redis"
                 ),
                 Err(e) => {
-                    error!(error = %e, operation = "redis.save_ambient_condition", "Failed to queue ambient condition")
+                    error!(error = %e, operation = "redis.save_ambient_condition", "Failed to queue ambient condition");
+                    break;
                 }
             };
         }

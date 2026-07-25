@@ -72,6 +72,9 @@ pub(super) async fn start_signal_handler_task(cancellation_token: CancellationTo
                     info!("SIGTERM received");
 
                     cancellation_token.cancel();
+                },
+                _ = cancellation_token.cancelled() => {
+                    info!(reason = "shutdown_completed", "Signal handler stopped");
                 }
             }
         }

@@ -22,15 +22,23 @@ impl From<RedisError> for DataStoreError {
 #[async_trait]
 pub trait DataStoreRepository {
     /// Fetch ambient conditions between two Redis stream timestamps.
-    async fn fetch_ambient_conditions<T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + Debug>(
+    ///
+    /// The arguments must be cloneable so the Redis adapter can replay a
+    /// transiently failed request without changing its meaning.
+    async fn fetch_ambient_conditions<
+        T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + Debug,
+    >(
         &mut self,
         start: T,
         end: T,
     ) -> Result<HashMap<String, AmbientConditionModel>, RedisError>;
 
     /// Fetch ambient conditions between two Redis stream timestamps with sampling.
+    ///
+    /// The arguments must be cloneable so the Redis adapter can replay a
+    /// transiently failed request without changing its meaning.
     async fn fetch_ambient_conditions_with_sampling<
-        T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + Debug,
+        T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + Debug,
     >(
         &mut self,
         start: T,

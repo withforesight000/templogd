@@ -5,7 +5,7 @@ use common::gateway::nature_remo_client::NatureRemoClient;
 use common::model::repository::datastore::DataStoreRepository;
 use common::model::repository::nature_remo::NatureRemo;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, info, info_span, instrument};
 
@@ -49,25 +49,57 @@ async fn run_with<S, SFut, NProvider, NFactory, NClient, DProvider, DFactory, DF
     let nature_remo_client_factory = nature_remo_client_factory(config.clone());
     let datastore_factory = datastore_factory(config.clone());
 
-    let datastore_task = start_datastore_task(config.clone(), cancellation_token.clone(), rx, datastore_factory);
-    let nature_remo_api_task = start_nature_remo_api_task(
+    let mut datastore_task = start_datastore_task(config.clone(), cancellation_token.clone(), rx, datastore_factory);
+    let mut nature_remo_api_task = start_nature_remo_api_task(
         config.clone(),
         cancellation_token.clone(),
         tx,
         nature_remo_client_factory,
     );
 
-    shutdown(cancellation_token.clone()).await;
+    let shutdown_future = shutdown(cancellation_token.clone());
+    tokio::pin!(shutdown_future);
 
-    match tokio::try_join!(nature_remo_api_task, datastore_task) {
-        Ok(_) => info!(
-            tasks = "nature_remo,redis",
-            "All background tasks completed successfully"
-        ),
-        Err(e) => {
-            error!(error = %e, "A background task failed");
-            cancellation_token.cancel();
+    enum FirstCompletion {
+        Shutdown,
+        NatureRemo,
+        Datastore,
+    }
+
+    let first_completion = tokio::select! {
+        _ = &mut shutdown_future => {
+            info!(reason = "shutdown_requested", "Shutdown requested");
+            FirstCompletion::Shutdown
+        },
+        result = &mut nature_remo_api_task => {
+            log_task_result("nature_remo", result);
+            FirstCompletion::NatureRemo
+        },
+        result = &mut datastore_task => {
+            log_task_result("redis", result);
+            FirstCompletion::Datastore
+        },
+    };
+
+    cancellation_token.cancel();
+    match first_completion {
+        FirstCompletion::Shutdown => {
+            let _ = nature_remo_api_task.await;
+            let _ = datastore_task.await;
         }
+        FirstCompletion::NatureRemo => {
+            let _ = datastore_task.await;
+        }
+        FirstCompletion::Datastore => {
+            let _ = nature_remo_api_task.await;
+        }
+    }
+}
+
+fn log_task_result(task: &'static str, result: Result<(), JoinError>) {
+    match result {
+        Ok(()) => info!(task, "Background task completed"),
+        Err(error) => error!(task, error = %error, "Background task failed"),
     }
 }
 
@@ -201,7 +233,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl DataStoreRepository for StubDatastore {
-        async fn fetch_ambient_conditions<T: ToRedisArgs + Send + Sync + 'static + Debug>(
+        async fn fetch_ambient_conditions<T: ToRedisArgs + Clone + Send + Sync + 'static + Debug>(
             &mut self,
             _start: T,
             _end: T,
@@ -209,7 +241,7 @@ mod tests {
             Ok(HashMap::new())
         }
 
-        async fn fetch_ambient_conditions_with_sampling<T: ToRedisArgs + Send + Sync + 'static + Debug>(
+        async fn fetch_ambient_conditions_with_sampling<T: ToRedisArgs + Clone + Send + Sync + 'static + Debug>(
             &mut self,
             _start: T,
             _end: T,
@@ -335,7 +367,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl DataStoreRepository for StubDatastoreSave {
-            async fn fetch_ambient_conditions<T: ToRedisArgs + Send + Sync + 'static + Debug>(
+            async fn fetch_ambient_conditions<T: ToRedisArgs + Clone + Send + Sync + 'static + Debug>(
                 &mut self,
                 _start: T,
                 _end: T,
@@ -344,7 +376,7 @@ mod tests {
                 Ok(HashMap::new())
             }
 
-            async fn fetch_ambient_conditions_with_sampling<T: ToRedisArgs + Send + Sync + 'static + Debug>(
+            async fn fetch_ambient_conditions_with_sampling<T: ToRedisArgs + Clone + Send + Sync + 'static + Debug>(
                 &mut self,
                 _start: T,
                 _end: T,

@@ -19,9 +19,13 @@ pub async fn run(
     loop {
         tokio::select! {
             operation = rx.recv() => {
+                let Some(operation) = operation else {
+                    info!(reason = "request_channel_closed", "Redis worker stopped");
+                    break;
+                };
+
                 debug!(operation = "datastore_operation", "Received operation from Nature Remo task");
-                if let Some(operation) = operation {
-                    match operation {
+                match operation {
                         DatastoreOperation::SaveAmbientCondition { ambient_condition } => {
                             match client.save_ambient_condition(ambient_condition).await {
                                 Ok(_) => info!(operation = "redis.save_ambient_condition", "Ambient condition saved to Redis"),
@@ -38,7 +42,6 @@ pub async fn run(
                             error!(operation = "redis.fetch_ambient_conditions_with_sampling", "Received unsupported operation in templogd Redis worker");
                             let _ = resp.send(Err(error.into()));
                         }
-                    }
                 }
             },
             _ = cancellation_token.cancelled() => {
@@ -63,7 +66,7 @@ mod tests {
         #[async_trait::async_trait]
         impl DataStoreRepository for DataStore {
             async fn fetch_ambient_conditions<
-                T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
+                T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
             >(
                 &mut self,
                 start: T,
@@ -71,7 +74,7 @@ mod tests {
             ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, RedisError>;
 
             async fn fetch_ambient_conditions_with_sampling<
-                T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
+                T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
             >(
                 &mut self,
                 start: T,
@@ -129,5 +132,19 @@ mod tests {
 
         token.cancel();
         run(config(), datastore, rx, token).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stops_when_request_channel_closes() {
+        let datastore = MockDataStore::new();
+        let (tx, rx) = mpsc::channel(1);
+        drop(tx);
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            run(config(), datastore, rx, CancellationToken::new()),
+        )
+        .await
+        .expect("worker did not stop after the request channel closed");
     }
 }

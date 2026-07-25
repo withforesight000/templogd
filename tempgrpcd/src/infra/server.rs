@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tonic::transport::server::Router;
-use tracing::{info, instrument};
+use tracing::{error, info, instrument};
 
 use super::{
     auth::ServerError,
@@ -47,7 +47,7 @@ where
     let (tx, rx) = tokio::sync::mpsc::channel(32);
 
     let grpc_server = start_grpc(tx, config.clone()).await?;
-    let redis_task = start_datastore(config.clone(), rx, cancellation_token.clone());
+    let mut redis_task = start_datastore(config.clone(), rx, cancellation_token.clone());
     start_signal_handler(cancellation_token.clone()).await;
 
     let addr = format!("{}:{}", config.get_server_bind_address(), config.get_server_port())
@@ -55,19 +55,50 @@ where
         .expect("Unable to parse socket address");
 
     let server_future = grpc_server.serve_with_shutdown(addr, cancellation_token.cancelled());
+    tokio::pin!(server_future);
 
     info!("tempgrpcd listening on {}", addr);
-    tokio::select! {
-        _ = server_future => {
-            info!("GRPC server was gracefully shut down");
-        },
-        _ = cancellation_token.cancelled() => {
-            info!("cancellation token was cancelled");
-        }
+    enum FirstCompletion {
+        Shutdown,
+        GrpcServer,
+        Redis,
     }
 
-    _ = tokio::join!(redis_task);
+    let first_completion = tokio::select! {
+        result = &mut server_future => {
+            match result {
+                Ok(()) => info!("GRPC server stopped"),
+                Err(error) => error!(error = %error, "GRPC server failed"),
+            }
+            FirstCompletion::GrpcServer
+        },
+        result = &mut redis_task => {
+            log_task_result("redis", result);
+            FirstCompletion::Redis
+        },
+        _ = cancellation_token.cancelled() => {
+            info!(reason = "shutdown_requested", "Shutdown requested");
+            FirstCompletion::Shutdown
+        }
+    };
+
+    cancellation_token.cancel();
+    match first_completion {
+        FirstCompletion::Shutdown | FirstCompletion::GrpcServer => {
+            let _ = redis_task.await;
+        }
+        FirstCompletion::Redis => {
+            let _ = server_future.await;
+        }
+    }
     Ok(())
+}
+
+fn log_task_result(task: &'static str, result: Result<(), JoinError>) {
+    match result {
+        Ok(()) => info!(task, "Background task completed"),
+        Err(error) => error!(task, error = %error, "Background task failed"),
+    }
 }
 
 #[cfg(test)]
@@ -133,5 +164,26 @@ mod tests {
             .await
             .expect("server did not shut down in time")
             .expect("server failed to start");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_with_stops_server_when_redis_worker_exits() {
+        let config = crate::config::new(args());
+
+        let start_datastore = |_cfg: Arc<Config>,
+                               _rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
+                               _token: CancellationToken| { tokio::spawn(async {}) };
+
+        let start_signal_handler = |_token: CancellationToken| async {};
+        let start_grpc = |tx: tokio::sync::mpsc::Sender<DatastoreOperation>, cfg: Arc<Config>| {
+            Box::pin(start_grpc_server_task(tx, cfg))
+                as std::pin::Pin<Box<dyn std::future::Future<Output = Result<Router, ServerError>> + Send>>
+        };
+
+        let fut = run_with(config, start_datastore, start_signal_handler, start_grpc);
+        tokio::time::timeout(std::time::Duration::from_secs(2), fut)
+            .await
+            .expect("server did not stop after the Redis worker exited")
+            .expect("server shutdown failed");
     }
 }
