@@ -13,7 +13,7 @@ pub struct GetAmbientConditionsUC {
 
 impl GetAmbientConditionsUC {
     /// Creates a use case that sends plain range queries to the Redis worker.
-    #[instrument(level = "info", name = "usecase.new", skip_all)]
+    #[instrument(level = "info", name = "usecase.get_ambient_conditions.new", skip_all)]
     pub fn new(tx: tokio::sync::mpsc::Sender<DatastoreOperation>) -> Self {
         Self { tx }
     }
@@ -57,8 +57,43 @@ impl GetAmbientConditions for GetAmbientConditionsUC {
 mod tests {
     use super::*;
     use crate::usecase::error::UsecaseError;
+    use crate::usecase::get_ambient_conditions_with_sampling::GetAmbientConditionsWithSamplingUC;
     use common::model::repository::datastore::DataStoreError;
+    use std::sync::{Arc, Mutex};
     use tokio::sync::mpsc;
+    use tracing::{Id, Subscriber, span::Attributes};
+    use tracing_subscriber::{Layer, layer::Context, layer::SubscriberExt};
+
+    #[derive(Clone, Default)]
+    struct SpanRecorder {
+        names: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl<S> Layer<S> for SpanRecorder
+    where
+        S: Subscriber,
+    {
+        fn on_new_span(&self, attrs: &Attributes<'_>, _id: &Id, _context: Context<'_, S>) {
+            self.names.lock().unwrap().push(attrs.metadata().name());
+        }
+    }
+
+    #[test]
+    fn constructors_use_component_specific_span_names() {
+        let recorder = SpanRecorder::default();
+        let names = recorder.names.clone();
+        let subscriber = tracing_subscriber::registry().with(recorder);
+
+        tracing::subscriber::with_default(subscriber, || {
+            let (tx, _rx) = mpsc::channel(1);
+            let _plain = GetAmbientConditionsUC::new(tx.clone());
+            let _sampling = GetAmbientConditionsWithSamplingUC::new(tx);
+        });
+
+        let names = names.lock().unwrap();
+        assert!(names.contains(&"usecase.get_ambient_conditions.new"));
+        assert!(names.contains(&"usecase.get_ambient_conditions_with_sampling.new"));
+    }
 
     #[tokio::test]
     async fn forwards_request_and_maps_response() {
