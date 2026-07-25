@@ -11,8 +11,22 @@ pub(crate) enum ServerError {
     InvalidBearerToken(#[source] InvalidMetadataValue),
     #[error("failed to render the Redis sampling function")]
     RenderSamplingFunction(#[source] askama::Error),
+    #[error("failed to connect to Redis")]
+    ConnectRedis(#[source] redis::RedisError),
     #[error("failed to load the Redis sampling function")]
     LoadSamplingFunction(#[source] redis::RedisError),
+    #[error("configured gRPC bind address is invalid")]
+    InvalidBindAddress(#[source] std::net::AddrParseError),
+    #[error("gRPC server failed")]
+    ServeGrpc(#[source] tonic::transport::Error),
+    #[error("{task} background task failed")]
+    BackgroundTask {
+        task: &'static str,
+        #[source]
+        source: tokio::task::JoinError,
+    },
+    #[error("{task} background task stopped unexpectedly")]
+    BackgroundTaskStopped { task: &'static str },
 }
 
 #[derive(Clone)]

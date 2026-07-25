@@ -9,7 +9,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, error, info, info_span, instrument};
+use tracing::{Instrument, info, info_span, instrument};
 
 use crate::{config::Config, controller, infra::auth::ServerError};
 use common::{gateway::datastore::DataStore, model::channel::datastore_operation::DatastoreOperation};
@@ -22,20 +22,13 @@ pub(super) fn start_datastore_task(
     config: Arc<Config>,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
-) -> JoinHandle<()> {
+) -> JoinHandle<Result<(), ServerError>> {
     let task_span = info_span!("infra.redis.task");
     tokio::spawn(
         async move {
-            let result = initialize_datastore(config).await;
-            match result {
-                Ok(datastore_client) => {
-                    controller::fetch_from_redis::run(datastore_client, rx, cancellation_token).await;
-                }
-                Err(error) => {
-                    error!(error = %error, "Redis worker initialization failed");
-                    cancellation_token.cancel();
-                }
-            }
+            let datastore_client = initialize_datastore(config).await?;
+            controller::fetch_from_redis::run(datastore_client, rx, cancellation_token).await;
+            Ok(())
         }
         .instrument(task_span),
     )
@@ -63,7 +56,8 @@ async fn initialize_datastore(
             config.get_redis_host(),
             config.get_redis_port()
         ))
-        .await,
+        .await
+        .map_err(ServerError::ConnectRedis)?,
     )
     .await;
     datastore_client

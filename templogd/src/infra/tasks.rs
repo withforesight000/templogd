@@ -120,7 +120,10 @@ fn make_redis_client_factory(
     config: Arc<Config>,
 ) -> impl Fn() -> Pin<Box<dyn Future<Output = DataStore<AsyncRedisCrateClient>> + Send>> {
     fn redis_client(url: String) -> Pin<Box<dyn Future<Output = DataStore<AsyncRedisCrateClient>> + Send>> {
-        Box::pin(async move { DataStore::new(AsyncRedisCrateClient::new(&url).await).await })
+        Box::pin(async move {
+            let redis_client = AsyncRedisCrateClient::new(&url).await.expect("failed to connect to Redis");
+            DataStore::new(redis_client).await
+        })
     }
 
     move || {

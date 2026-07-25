@@ -74,15 +74,15 @@ pub struct AsyncRedisCrateClient<C: RedisConnection = RealRedisConnection> {
 impl AsyncRedisCrateClient<RealRedisConnection> {
     /// Opens a Redis connection manager for the supplied Redis URL.
     ///
-    /// Startup configuration errors currently abort initialization because the
-    /// daemon cannot perform useful work without Redis.
+    /// Returns the Redis configuration or connection error so the daemon can
+    /// report a failed startup to its process supervisor.
     #[instrument(level = "info", name = "infra.redis.new", skip_all)]
-    pub async fn new(host: &str) -> Self {
-        let client = redis::Client::open(host).unwrap();
-        let connection = ConnectionManager::new(client).await.unwrap();
-        Self {
+    pub async fn new(host: &str) -> Result<Self, RedisError> {
+        let client = redis::Client::open(host)?;
+        let connection = ConnectionManager::new(client).await?;
+        Ok(Self {
             connection: RealRedisConnection { connection },
-        }
+        })
     }
 }
 
@@ -214,11 +214,9 @@ mod tests {
         }
     }
 
-    // Creating a client with an invalid URL should panic because of unwraps.
     #[tokio::test]
-    #[should_panic]
-    async fn new_panics_on_invalid_url() {
-        let _ = AsyncRedisCrateClient::new("not-a-redis-url").await;
+    async fn new_returns_an_error_for_an_invalid_url() {
+        assert!(AsyncRedisCrateClient::new("not-a-redis-url").await.is_err());
     }
 
     #[tokio::test(flavor = "current_thread")]
