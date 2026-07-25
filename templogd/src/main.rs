@@ -1,5 +1,6 @@
 use clap::Parser;
 use tracing::info;
+use tracing_subscriber::fmt::format::FmtSpan;
 
 mod config;
 mod controller;
@@ -30,7 +31,11 @@ struct TemplogdArgs {
 
 #[tokio::main]
 async fn main() {
-    json_subscriber::fmt().with_max_level(tracing::Level::DEBUG).init();
+    tracing_subscriber::fmt()
+        .json()
+        .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
     info!("starting templogd...");
 
     let args = TemplogdArgs::parse();

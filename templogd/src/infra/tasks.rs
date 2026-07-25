@@ -4,7 +4,6 @@ use common::gateway::datastore::DataStore;
 use common::gateway::nature_remo_client::NatureRemoClient;
 use common::model::repository::datastore::DataStoreRepository;
 use common::model::repository::nature_remo::NatureRemo;
-use scopeguard::defer;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -15,7 +14,7 @@ use common::infra::{async_redis_client::AsyncRedisCrateClient, http_client::Reqw
 use common::model::channel::datastore_operation::DatastoreOperation;
 
 /// Starts templogd's polling and Redis workers and coordinates shutdown.
-#[instrument(parent = None)]
+#[instrument(level = "info", parent = None, skip_all)]
 pub async fn run(config: Arc<Config>) {
     run_with(
         config,
@@ -26,6 +25,7 @@ pub async fn run(config: Arc<Config>) {
     .await;
 }
 
+#[instrument(level = "debug", skip_all)]
 async fn run_with<S, SFut, NProvider, NFactory, NClient, DProvider, DFactory, DFut, DClient>(
     config: Arc<Config>,
     shutdown: S,
@@ -42,9 +42,6 @@ async fn run_with<S, SFut, NProvider, NFactory, NClient, DProvider, DFactory, DF
     DFut: Future<Output = DClient> + Send + 'static,
     DClient: DataStoreRepository + Send + 'static,
 {
-    info!("Started");
-    defer! {info!("Ended")}
-
     let cancellation_token = CancellationToken::new();
     let (tx, rx) = mpsc::channel(32);
 
@@ -74,6 +71,7 @@ async fn run_with<S, SFut, NProvider, NFactory, NClient, DProvider, DFactory, DF
     }
 }
 
+#[instrument(level = "debug", skip_all)]
 fn make_nature_remo_client_factory(config: Arc<Config>) -> impl Fn() -> NatureRemoClient<ReqwestClient> {
     move || {
         NatureRemoClient::new(
@@ -85,6 +83,7 @@ fn make_nature_remo_client_factory(config: Arc<Config>) -> impl Fn() -> NatureRe
     }
 }
 
+#[instrument(level = "debug", skip_all)]
 fn make_redis_client_factory(
     config: Arc<Config>,
 ) -> impl Fn() -> Pin<Box<dyn Future<Output = DataStore<AsyncRedisCrateClient>> + Send>> {
@@ -101,6 +100,7 @@ fn make_redis_client_factory(
     }
 }
 
+#[instrument(level = "debug", skip_all)]
 fn start_nature_remo_api_task<R, T>(
     config: Arc<Config>,
     cancellation_token: CancellationToken,
@@ -121,6 +121,7 @@ where
     )
 }
 
+#[instrument(level = "debug", skip_all)]
 fn start_datastore_task<F, DFut, DClient>(
     config: Arc<Config>,
     cancellation_token: CancellationToken,
@@ -142,6 +143,7 @@ where
     )
 }
 
+#[instrument(level = "debug", skip_all)]
 async fn make_signal_handlers(cancellation_token: CancellationToken) {
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("Failed to create SIGTERM signal listener");

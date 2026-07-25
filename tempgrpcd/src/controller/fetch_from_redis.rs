@@ -4,7 +4,7 @@ use common::model::{channel::datastore_operation::DatastoreOperation, repository
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
-#[instrument(name = "controller.fetch_from_redis", skip_all)]
+#[instrument(level = "info", name = "controller.fetch_from_redis", skip_all)]
 pub async fn run(
     client: impl DataStoreRepository,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,

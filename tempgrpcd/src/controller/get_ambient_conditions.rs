@@ -20,6 +20,7 @@ pub struct GetAmbientConditionsImpl<G: GetAmbientConditions, S: GetAmbientCondit
 
 impl<G: GetAmbientConditions + Debug, S: GetAmbientConditionsWithSampling + Debug> GetAmbientConditionsImpl<G, S> {
     /// Creates a controller with plain and sampled ambient-condition use cases.
+    #[instrument(level = "info", name = "grpc.get_ambient_conditions_controller_new", skip_all)]
     pub fn new(get_ambient_conditions_uc: G, get_ambient_conditions_with_sampling: S) -> Self {
         Self {
             get_ambient_conditions_uc,
@@ -35,6 +36,7 @@ impl<
 > TempgrpcdService for GetAmbientConditionsImpl<G, S>
 {
     #[instrument(
+        level = "info",
         name = "grpc.get_ambient_conditions",
         skip_all,
         fields(samples = field::Empty, route = field::Empty),

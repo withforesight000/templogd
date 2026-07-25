@@ -8,7 +8,7 @@ use crate::config::Config;
 use crate::usecase;
 use common::model::channel::datastore_operation::DatastoreOperation;
 
-#[instrument(name = "controller.log_temp", skip_all)]
+#[instrument(level = "info", name = "controller.log_temp", skip_all)]
 pub async fn run(
     config: Arc<Config>,
     client: impl NatureRemo,

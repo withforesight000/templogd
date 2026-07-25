@@ -8,7 +8,7 @@ use common::model::channel::datastore_operation::DatastoreOperation;
 ///
 /// The worker runs until cancellation and converts repository errors into the
 /// typed datastore errors carried by the response channels.
-#[instrument(name = "usecase.fetch_from_redis", skip_all)]
+#[instrument(level = "info", name = "usecase.fetch_from_redis", skip_all)]
 pub async fn run(
     mut client: impl DataStoreRepository,
     mut rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,

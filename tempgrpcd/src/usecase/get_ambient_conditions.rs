@@ -13,6 +13,7 @@ pub struct GetAmbientConditionsUC {
 
 impl GetAmbientConditionsUC {
     /// Creates a use case that sends plain range queries to the Redis worker.
+    #[instrument(level = "info", name = "usecase.get_ambient_conditions_new", skip_all)]
     pub fn new(tx: tokio::sync::mpsc::Sender<DatastoreOperation>) -> Self {
         Self { tx }
     }
@@ -21,7 +22,7 @@ impl GetAmbientConditionsUC {
 #[async_trait::async_trait]
 impl GetAmbientConditions for GetAmbientConditionsUC {
     /// Queues a range query and waits for the worker's domain result.
-    #[instrument(name = "usecase.get_ambient_conditions", skip_all, err)]
+    #[instrument(level = "info", name = "usecase.get_ambient_conditions", skip_all, err)]
     async fn run(
         &self,
         start_time_seconds: i64,

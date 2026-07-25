@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use askama::Template;
-use scopeguard::defer;
 use tempgrpcd_protos::tempgrpcd::v1::tempgrpcd_service_server::TempgrpcdServiceServer;
 use tokio::{
     signal::{
@@ -18,7 +17,7 @@ use tonic::{
     transport::{Server, server::Router},
 };
 use tonic_reflection::server::Builder;
-use tracing::{Instrument, debug, info, info_span, instrument, warn};
+use tracing::{Instrument, info, info_span, instrument, warn};
 
 use crate::{
     config::Config,
@@ -39,6 +38,7 @@ struct AuthInterceptor {
 }
 
 impl Interceptor for AuthInterceptor {
+    #[instrument(level = "info", name = "grpc.authenticate", skip_all)]
     fn call(&mut self, req: Request<()>) -> Result<Request<()>, Status> {
         let correct_bearer_token = format!("Bearer {}", self.token);
         let token: MetadataValue<_> = correct_bearer_token.parse().unwrap();
@@ -75,7 +75,7 @@ mod tests {
 }
 
 /// Starts the tempgrpcd server, Redis worker, and shutdown handling.
-#[instrument(parent = None)]
+#[instrument(level = "info", parent = None)]
 pub async fn run(config: Arc<Config>) {
     run_with(
         config,
@@ -86,6 +86,7 @@ pub async fn run(config: Arc<Config>) {
     .await;
 }
 
+#[instrument(level = "debug", skip_all)]
 async fn run_with<SD, SS, SG, SGFut>(config: Arc<Config>, start_datastore: SD, start_signal_handler: SS, start_grpc: SG)
 where
     SD: FnOnce(Arc<Config>, tokio::sync::mpsc::Receiver<DatastoreOperation>, CancellationToken) -> JoinHandle<()>,
@@ -96,9 +97,6 @@ where
         Arc<Config>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Router> + Send>>,
 {
-    info!("Started");
-    defer! {info!("Ended")}
-
     let cancellation_token = CancellationToken::new();
     let (tx, rx) = tokio::sync::mpsc::channel(32);
 
@@ -125,6 +123,7 @@ where
     _ = tokio::join!(redis_task);
 }
 
+#[instrument(level = "debug", skip_all)]
 fn boxed_start_grpc_server_task(
     tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
     config: Arc<Config>,
@@ -132,6 +131,7 @@ fn boxed_start_grpc_server_task(
     Box::pin(start_grpc_server_task(tx, config))
 }
 
+#[instrument(level = "debug", skip_all)]
 fn start_datastore_task(
     config: Arc<Config>,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
@@ -170,6 +170,7 @@ fn start_datastore_task(
     )
 }
 
+#[instrument(level = "debug", skip_all)]
 async fn start_signal_handler_task(cancellation_token: CancellationToken) {
     let mut sigterm = signal(SignalKind::terminate()).expect("Failed to create signal");
     tokio::spawn(
@@ -193,11 +194,8 @@ async fn start_signal_handler_task(cancellation_token: CancellationToken) {
     );
 }
 
-#[instrument(parent = None)]
+#[instrument(level = "debug", parent = None, skip_all)]
 async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>, config: Arc<Config>) -> Router {
-    debug!("Started");
-    defer! {debug!("Ended")}
-
     let get_ambient_conditions_uc = GetAmbientConditionsUC::new(tx.clone());
     let get_ambient_conditions_with_sampling_uc = GetAmbientConditionsWithSamplingUC::new(tx);
     let grpc_service = TempgrpcdController::new(get_ambient_conditions_uc, get_ambient_conditions_with_sampling_uc);

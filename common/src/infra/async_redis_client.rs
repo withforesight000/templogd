@@ -76,6 +76,7 @@ impl AsyncRedisCrateClient<RealRedisConnection> {
     ///
     /// Startup configuration errors currently abort initialization because the
     /// daemon cannot perform useful work without Redis.
+    #[instrument(level = "info", name = "redis.client_new", skip_all)]
     pub async fn new(host: &str) -> Self {
         let client = redis::Client::open(host).unwrap();
         let connection = ConnectionManager::new(client).await.unwrap();
@@ -87,6 +88,7 @@ impl AsyncRedisCrateClient<RealRedisConnection> {
 
 impl<C: RedisConnection> AsyncRedisCrateClient<C> {
     /// Builds a Redis client around a connection, primarily for in-process tests.
+    #[instrument(level = "info", name = "redis.client_new_with_connection", skip_all)]
     pub fn new_with_connection(connection: C) -> Self {
         Self { connection }
     }
@@ -94,7 +96,7 @@ impl<C: RedisConnection> AsyncRedisCrateClient<C> {
 
 #[async_trait]
 impl<C: RedisConnection> Redis for AsyncRedisCrateClient<C> {
-    #[instrument(name = "redis.fcall", skip_all, err)]
+    #[instrument(level = "info", name = "redis.fcall", skip_all, err)]
     async fn fcall<K: ToRedisArgs + Send + Sync + 'static, A: ToRedisArgs + Send + Sync + 'static>(
         &mut self,
         function_name: &str,
@@ -110,7 +112,7 @@ impl<C: RedisConnection> Redis for AsyncRedisCrateClient<C> {
         })
     }
 
-    #[instrument(name = "redis.function_load", skip_all, err)]
+    #[instrument(level = "info", name = "redis.function_load", skip_all, err)]
     async fn function_load(&mut self, replace: bool, code: &str) -> Result<String, RedisError> {
         let mut c = cmd("FUNCTION");
         c.arg("LOAD").arg(if replace { "REPLACE" } else { "" }).arg(code);
@@ -121,7 +123,7 @@ impl<C: RedisConnection> Redis for AsyncRedisCrateClient<C> {
         })
     }
 
-    #[instrument(name = "redis.xadd", skip_all, err)]
+    #[instrument(level = "info", name = "redis.xadd", skip_all, err)]
     async fn xadd<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
         &mut self,
         key: &str,
@@ -131,6 +133,7 @@ impl<C: RedisConnection> Redis for AsyncRedisCrateClient<C> {
         self.connection.xadd(key, id, items).await
     }
 
+    #[instrument(level = "info", name = "redis.xrange", skip_all, err)]
     async fn xrange<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
         &mut self,
         key: &str,

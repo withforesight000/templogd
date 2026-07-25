@@ -13,6 +13,7 @@ pub struct GetAmbientConditionsWithSamplingUC {
 
 impl GetAmbientConditionsWithSamplingUC {
     /// Creates a use case that sends sampled range queries to the Redis worker.
+    #[instrument(level = "info", name = "usecase.get_ambient_conditions_with_sampling_new", skip_all)]
     pub fn new(tx: tokio::sync::mpsc::Sender<DatastoreOperation>) -> Self {
         Self { tx }
     }
@@ -21,7 +22,7 @@ impl GetAmbientConditionsWithSamplingUC {
 #[async_trait::async_trait]
 impl GetAmbientConditionsWithSampling for GetAmbientConditionsWithSamplingUC {
     /// Queues a sampled range query and waits for the worker's domain result.
-    #[instrument(name = "usecase.get_ambient_conditions_with_sampling", skip_all, err)]
+    #[instrument(level = "info", name = "usecase.get_ambient_conditions_with_sampling", skip_all, err)]
     async fn run(
         &self,
         start_time_seconds: i64,

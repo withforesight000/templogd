@@ -25,6 +25,7 @@ impl Default for ReqwestClient {
 
 impl ReqwestClient {
     /// Creates a client that applies the request timeout at each HTTP call.
+    #[instrument(level = "info", name = "http.client_new", skip_all)]
     pub fn new() -> ReqwestClient {
         ReqwestClient {
             client: reqwest::Client::new(),
@@ -32,7 +33,7 @@ impl ReqwestClient {
     }
 
     /// Converts an HTTP response into JSON while classifying status and body failures.
-    #[instrument(name = "http.handle_response", skip_all, err)]
+    #[instrument(level = "debug", name = "http.handle_response", skip_all, err)]
     async fn handle_response(response: reqwest::Response) -> Result<Value, ClientError> {
         let status = response.status();
         if !status.is_success() {
@@ -45,6 +46,7 @@ impl ReqwestClient {
 }
 
 /// Classifies errors raised while sending an HTTP request.
+#[instrument(level = "debug", name = "http.classify_request_error", skip_all)]
 fn classify_request_error(error: reqwest::Error) -> ClientError {
     if error.is_timeout() {
         ClientError::Timeout(error)
@@ -54,6 +56,7 @@ fn classify_request_error(error: reqwest::Error) -> ClientError {
 }
 
 /// Classifies errors raised while decoding a successful HTTP response.
+#[instrument(level = "debug", name = "http.classify_response_error", skip_all)]
 fn classify_response_error(error: reqwest::Error) -> ClientError {
     if error.is_timeout() {
         ClientError::Timeout(error)
@@ -63,6 +66,7 @@ fn classify_response_error(error: reqwest::Error) -> ClientError {
 }
 
 /// Keeps only a bounded, UTF-8-safe preview of an error response body.
+#[instrument(level = "debug", name = "http.body_preview", skip_all)]
 fn body_preview(body: &str) -> String {
     let bytes = body.as_bytes();
     let preview = &bytes[..bytes.len().min(MAX_ERROR_BODY_PREVIEW_BYTES)];
@@ -75,7 +79,7 @@ fn body_preview(body: &str) -> String {
 
 #[async_trait]
 impl HttpClient for ReqwestClient {
-    #[instrument(name = "http.get_with_bearer_token", skip_all, err)]
+    #[instrument(level = "info", name = "http.get_with_bearer_token", skip_all, err)]
     async fn get_with_bearer_token(&self, url: &str, bearer_token: &str) -> Result<Value, ClientError> {
         let response = self
             .client
@@ -88,7 +92,7 @@ impl HttpClient for ReqwestClient {
         Self::handle_response(response).await
     }
 
-    #[instrument(name = "http.post_json", skip_all, err)]
+    #[instrument(level = "info", name = "http.post_json", skip_all, err)]
     async fn post_json(&self, url: &str, body: &Value) -> Result<Value, ClientError> {
         let response = self
             .client
@@ -101,7 +105,7 @@ impl HttpClient for ReqwestClient {
         Self::handle_response(response).await
     }
 
-    #[instrument(name = "http.get_with_header", skip_all, err)]
+    #[instrument(level = "info", name = "http.get_with_header", skip_all, err)]
     async fn get_with_header(&self, url: &str, header_name: &str, header_value: &str) -> Result<Value, ClientError> {
         let response = self
             .client

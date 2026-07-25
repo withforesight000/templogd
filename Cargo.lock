@@ -636,7 +636,6 @@ dependencies = [
  "nix",
  "redis",
  "reqwest",
- "scopeguard",
  "serde_json",
  "syslog",
  "thiserror 2.0.18",
@@ -1504,21 +1503,6 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "json-subscriber"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ace9335c952ff02bc93370d5bf93383f311607de1e83fb5db51628edd0bbe300"
-dependencies = [
- "serde",
- "serde_json",
- "tracing",
- "tracing-core",
- "tracing-serde",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -2726,13 +2710,11 @@ dependencies = [
  "clap",
  "common",
  "garde",
- "json-subscriber",
  "mockall",
  "pbjson-types",
  "prost",
  "prost-types",
  "redis",
- "scopeguard",
  "tempgrpcd-protos",
  "thiserror 2.0.18",
  "tokio",
@@ -2742,6 +2724,7 @@ dependencies = [
  "tonic-health",
  "tonic-reflection",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -2766,16 +2749,15 @@ dependencies = [
  "async-trait",
  "clap",
  "common",
- "json-subscriber",
  "mockall",
  "redis",
  "reqwest",
- "scopeguard",
  "serde",
  "serde_json",
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3149,9 +3131,12 @@ version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb7f578e5945fb242538965c2d0b04418d38ec25c79d160cd279bf0731c8d319"
 dependencies = [
+ "serde",
+ "serde_json",
  "sharded-slab",
  "thread_local",
  "tracing-core",
+ "tracing-serde",
 ]
 
 [[package]]

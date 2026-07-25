@@ -1,5 +1,6 @@
 use clap::Parser;
 use tracing::info;
+use tracing_subscriber::fmt::format::FmtSpan;
 
 mod config;
 mod controller;
@@ -34,7 +35,13 @@ struct TempgrpcdArgs {
 
 #[tokio::main]
 async fn main() {
-    json_subscriber::fmt().with_max_level(tracing::Level::DEBUG).init();
+    tracing_subscriber::fmt()
+        .json()
+        // Record span creation and close events as operation start/end logs.
+        .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
+        // Keep debug-level implementation spans available during incidents.
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
     info!("starting tempgrpcd...");
 
     let args = TempgrpcdArgs::parse();

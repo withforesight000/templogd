@@ -43,6 +43,7 @@ impl<T: HttpClient> NatureRemoClient<T> {
     ///
     /// The token and device ID are retained for requests but are excluded from
     /// the gateway's debug representation and diagnostic messages.
+    #[instrument(level = "info", name = "nature_remo.client_new", skip_all)]
     pub fn new(http_client: T, api_token: String, base_address: String, device_id: String) -> NatureRemoClient<T> {
         NatureRemoClient {
             http_client,
@@ -52,7 +53,7 @@ impl<T: HttpClient> NatureRemoClient<T> {
         }
     }
 
-    #[instrument(name = "nature_remo.get_devices", skip_all, err)]
+    #[instrument(level = "debug", name = "nature_remo.get_devices", skip_all, err)]
     async fn get_devices(&self) -> Result<Value, Box<dyn Error + Send>> {
         let url = format!("{}/1/devices", self.base_address);
         self.http_client
@@ -62,6 +63,7 @@ impl<T: HttpClient> NatureRemoClient<T> {
     }
 
     /// Parses the configured device's three ambient measurements without panicking on malformed API data.
+    #[instrument(level = "debug", name = "nature_remo.parse_ambient_condition", skip_all, err)]
     fn parse_ambient_condition(&self, devices: &Value) -> Result<AmbientConditionModel, NatureRemoResponseError> {
         let device = devices
             .as_array()
@@ -92,7 +94,7 @@ impl<T: HttpClient> NatureRemoClient<T> {
 
 #[async_trait]
 impl<T: HttpClient + Sync> NatureRemo for NatureRemoClient<T> {
-    #[instrument(name = "nature_remo.fetch_ambient_condition", skip_all, err)]
+    #[instrument(level = "info", name = "nature_remo.fetch_ambient_condition", skip_all, err)]
     async fn fetch_ambient_condition(&self) -> Result<AmbientConditionModel, Box<dyn Error + Send>> {
         let devices = match self.get_devices().await {
             Ok(devices) => devices,

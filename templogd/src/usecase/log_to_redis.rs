@@ -9,7 +9,7 @@ use crate::config::Config;
 use common::model::channel::datastore_operation::DatastoreOperation;
 
 /// Persists queued ambient readings until the daemon cancellation token fires.
-#[instrument(name = "usecase.log_to_redis", skip_all)]
+#[instrument(level = "info", name = "usecase.log_to_redis", skip_all)]
 pub async fn run(
     _config: Arc<Config>,
     mut client: impl DataStoreRepository,
