@@ -1,95 +1,17 @@
 use std::sync::Arc;
 
-use askama::Template;
-use tempgrpcd_protos::tempgrpcd::v1::tempgrpcd_service_server::TempgrpcdServiceServer;
-use tokio::{
-    signal::{
-        self,
-        unix::{SignalKind, signal},
-    },
-    task::JoinHandle,
-};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tonic::{
-    Request, Status,
-    metadata::{AsciiMetadataValue, errors::InvalidMetadataValue},
-    service::Interceptor,
-    transport::{Server, server::Router},
+use tonic::transport::server::Router;
+use tracing::{info, instrument};
+
+use super::{
+    auth::ServerError,
+    grpc::boxed_start_grpc_server_task,
+    tasks::{start_datastore_task, start_signal_handler_task},
 };
-use tonic_reflection::server::Builder;
-use tracing::{Instrument, info, info_span, instrument, warn};
-
-use crate::{
-    config::Config,
-    controller::{self, get_ambient_conditions::GetAmbientConditionsImpl},
-    usecase::{
-        get_ambient_conditions::GetAmbientConditionsUC,
-        get_ambient_conditions_with_sampling::GetAmbientConditionsWithSamplingUC,
-    },
-};
-use common::{gateway::datastore::DataStore, model::channel::datastore_operation::DatastoreOperation};
-
-pub const REDIS_XRANGE_WITH_SAMPLING: &str = "xrange_with_sampling";
-type TempgrpcdController = GetAmbientConditionsImpl<GetAmbientConditionsUC, GetAmbientConditionsWithSamplingUC>;
-
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum ServerError {
-    #[error("configured bearer token is invalid")]
-    InvalidBearerToken(#[source] InvalidMetadataValue),
-}
-
-#[derive(Clone)]
-struct AuthInterceptor {
-    token: AsciiMetadataValue,
-}
-
-impl AuthInterceptor {
-    /// Creates an interceptor after validating the configured bearer token as gRPC metadata.
-    fn new(token: &str) -> Result<Self, InvalidMetadataValue> {
-        let token = format!("Bearer {token}").parse()?;
-        Ok(Self { token })
-    }
-}
-
-impl Interceptor for AuthInterceptor {
-    #[instrument(level = "info", name = "infra.authenticate", skip_all)]
-    fn call(&mut self, req: Request<()>) -> Result<Request<()>, Status> {
-        match req.metadata().get("authorization") {
-            Some(t) if self.token == t => Ok(req),
-            _ => {
-                warn!("gRPC authentication failed");
-                Err(Status::unauthenticated("No valid auth token"))
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tonic::metadata::MetadataValue;
-
-    #[test]
-    fn interceptor_allows_valid_token() {
-        let mut interceptor = AuthInterceptor::new("secret").unwrap();
-        let mut req = Request::new(());
-        req.metadata_mut().insert("authorization", MetadataValue::try_from("Bearer secret").unwrap());
-        assert!(interceptor.call(req).is_ok());
-    }
-
-    #[test]
-    fn interceptor_rejects_invalid_token() {
-        let mut interceptor = AuthInterceptor::new("secret").unwrap();
-        let req = Request::new(());
-        let err = interceptor.call(req).unwrap_err();
-        assert_eq!(err.code(), tonic::Code::Unauthenticated);
-    }
-
-    #[test]
-    fn interceptor_rejects_invalid_configured_token() {
-        assert!(AuthInterceptor::new("secret\n").is_err());
-    }
-}
+use crate::config::Config;
+use common::model::channel::datastore_operation::DatastoreOperation;
 
 /// Starts the tempgrpcd server, Redis worker, and shutdown handling.
 ///
@@ -148,118 +70,9 @@ where
     Ok(())
 }
 
-#[instrument(level = "debug", name = "infra.boxed_start_grpc_server_task", skip_all)]
-fn boxed_start_grpc_server_task(
-    tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
-    config: Arc<Config>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Router, ServerError>> + Send>> {
-    // Tokio repeatedly calls a Future's `poll` method to drive its execution and
-    // ask whether it can make progress: it returns `Pending` when it must wait
-    // for I/O and `Ready` when it has finished. An `async fn` Future stores its
-    // state across `await` points and may contain references to that state, so
-    // it must remain at a stable memory address while Tokio polls it. `Pin`
-    // provides that guarantee, and `Box::pin` stores the Future in a stable
-    // heap allocation.
-    Box::pin(start_grpc_server_task(tx, config))
-}
-
-#[instrument(level = "debug", name = "infra.start_datastore_task", skip_all)]
-fn start_datastore_task(
-    config: Arc<Config>,
-    rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
-    cancellation_token: CancellationToken,
-) -> JoinHandle<()> {
-    let task_span = info_span!("infra.redis.task");
-    tokio::spawn(
-        async move {
-            #[derive(Template)]
-            #[template(path = "xrange_with_sampling.lua.j2")]
-            struct XRANGEWithSamplingTemplate<'a> {
-                function_name: &'a str,
-            }
-            let xrange_with_sampling_code = XRANGEWithSamplingTemplate {
-                function_name: REDIS_XRANGE_WITH_SAMPLING,
-            }
-            .render()
-            .expect("Failed to render template");
-
-            let mut datastore_client = DataStore::new(
-                common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!(
-                    "redis://{}:{}",
-                    config.get_redis_host(),
-                    config.get_redis_port()
-                ))
-                .await,
-            )
-            .await;
-            datastore_client
-                .load_function_xrange_with_sampling(&xrange_with_sampling_code)
-                .await
-                .expect("Failed to load Lua script for xrange with sampling");
-            controller::fetch_from_redis::run(datastore_client, rx, cancellation_token).await
-        }
-        .instrument(task_span),
-    )
-}
-
-#[instrument(level = "debug", name = "infra.start_signal_handler_task", skip_all)]
-async fn start_signal_handler_task(cancellation_token: CancellationToken) {
-    let mut sigterm = signal(SignalKind::terminate()).expect("Failed to create signal");
-    tokio::spawn(
-        async move {
-            tokio::select! {
-                _ = signal::ctrl_c() => {
-                    info!("SIGINT received");
-
-                    cancellation_token.cancel();
-                    // break;
-                },
-                _ = sigterm.recv() => {
-                    info!("SIGTERM received");
-
-                    cancellation_token.cancel();
-                    // break;
-                }
-            }
-        }
-        .instrument(info_span!("infra.signal_handler.task")),
-    );
-}
-
-#[instrument(level = "debug", name = "infra.start_grpc_server_task", parent = None, skip_all)]
-async fn start_grpc_server_task(
-    tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
-    config: Arc<Config>,
-) -> Result<Router, ServerError> {
-    let auth_interceptor = AuthInterceptor::new(config.get_bearer_token()).map_err(ServerError::InvalidBearerToken)?;
-    let get_ambient_conditions_uc = GetAmbientConditionsUC::new(tx.clone());
-    let get_ambient_conditions_with_sampling_uc = GetAmbientConditionsWithSamplingUC::new(tx);
-    let grpc_service = TempgrpcdController::new(get_ambient_conditions_uc, get_ambient_conditions_with_sampling_uc);
-    let (reporter, health_server) = tonic_health::server::health_reporter();
-    reporter.set_serving::<TempgrpcdServiceServer<TempgrpcdController>>().await;
-
-    Ok(Server::builder()
-        .trace_fn(|request| {
-            let trace_id = super::request_tracing::new_trace_id();
-            info_span!(
-                "infra.grpc.request",
-                trace_id = %trace_id,
-                method = %request.uri().path(),
-            )
-        })
-        .add_service(TempgrpcdServiceServer::with_interceptor(grpc_service, auth_interceptor))
-        .add_service(
-            Builder::configure()
-                .register_encoded_file_descriptor_set(tempgrpcd_protos::tempgrpcd::v1::FILE_DESCRIPTOR_SET)
-                .register_encoded_file_descriptor_set(tonic_health::pb::FILE_DESCRIPTOR_SET)
-                .build_v1()
-                .unwrap(),
-        )
-        .add_service(health_server))
-}
-
 #[cfg(test)]
-mod run_tests {
+mod tests {
+    use super::super::grpc::start_grpc_server_task;
     use super::*;
 
     fn args() -> crate::TempgrpcdArgs {
