@@ -76,12 +76,12 @@ pub(super) async fn start_signal_handler_task(cancellation_token: CancellationTo
         async move {
             tokio::select! {
                 _ = signal::ctrl_c() => {
-                    info!("SIGINT received");
+                    log_shutdown_signal("SIGINT");
 
                     cancellation_token.cancel();
                 },
                 _ = sigterm.recv() => {
-                    info!("SIGTERM received");
+                    log_shutdown_signal("SIGTERM");
 
                     cancellation_token.cancel();
                 },
@@ -94,9 +94,53 @@ pub(super) async fn start_signal_handler_task(cancellation_token: CancellationTo
     );
 }
 
+fn log_shutdown_signal(signal: &'static str) {
+    info!(signal, "Shutdown signal received");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use tracing::{
+        Event, Subscriber,
+        field::{Field, Visit},
+    };
+    use tracing_subscriber::{Layer, layer::Context, layer::SubscriberExt};
+
+    #[derive(Clone, Default)]
+    struct SignalRecorder {
+        signals: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S> Layer<S> for SignalRecorder
+    where
+        S: Subscriber,
+    {
+        fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+            event.record(&mut SignalVisitor {
+                signals: self.signals.clone(),
+            });
+        }
+    }
+
+    struct SignalVisitor {
+        signals: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Visit for SignalVisitor {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "signal" {
+                self.signals.lock().unwrap().push(format!("{value:?}"));
+            }
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            if field.name() == "signal" {
+                self.signals.lock().unwrap().push(value.to_string());
+            }
+        }
+    }
 
     #[test]
     fn datastore_initialization_errors_preserve_their_sources() {
@@ -106,5 +150,19 @@ mod tests {
         let redis_error = redis::RedisError::from((redis::ErrorKind::Client, "load failed"));
         let load_error = ServerError::LoadSamplingFunction(redis_error);
         assert!(std::error::Error::source(&load_error).unwrap().to_string().contains("load failed"));
+    }
+
+    #[test]
+    fn shutdown_signal_logs_include_filterable_signal_fields() {
+        let recorder = SignalRecorder::default();
+        let signals = recorder.signals.clone();
+        let subscriber = tracing_subscriber::registry().with(recorder);
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_shutdown_signal("SIGINT");
+            log_shutdown_signal("SIGTERM");
+        });
+
+        assert_eq!(*signals.lock().unwrap(), ["SIGINT", "SIGTERM"]);
     }
 }
