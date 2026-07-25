@@ -97,7 +97,7 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
                 Box::pin(async move { redis.xrange("ambient_condition", start, end).await })
             })
             .await
-            .map(|values| parse_ambient_conditions(&values));
+            .and_then(|values| parse_ambient_conditions(&values));
         match &result {
             Ok(values) => info!(
                 operation = "redis.fetch_ambient_conditions",
@@ -127,7 +127,7 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
                 Box::pin(async move { redis.fcall("xrange_with_sampling", &["ambient_condition"], &args).await })
             })
             .await
-            .map(|values| parse_ambient_conditions(&values));
+            .and_then(|values| parse_ambient_conditions(&values));
         match &result {
             Ok(values) => info!(
                 operation = "redis.fetch_ambient_conditions_with_sampling",
@@ -184,23 +184,61 @@ fn is_retryable_redis_error(error: &RedisError) -> bool {
 ///
 /// Redis stream entries are expected to contain an entry ID followed by the
 /// temperature, humidity, and illumination field pairs.
-#[instrument(level = "debug", name = "gateway.redis.parse_ambient_conditions", skip_all)]
-fn parse_ambient_conditions(values: &redis::Value) -> HashMap<String, AmbientConditionModel> {
+#[instrument(level = "debug", name = "gateway.redis.parse_ambient_conditions", skip_all, err)]
+fn parse_ambient_conditions(values: &redis::Value) -> Result<HashMap<String, AmbientConditionModel>, RedisError> {
+    let entries = match values {
+        redis::Value::Array(entries) | redis::Value::Set(entries) => entries,
+        _ => return Err(invalid_stream_response("expected a Redis stream response array")),
+    };
     let mut ambient_conditions = HashMap::new();
-    for value in values.as_sequence().unwrap() {
-        let seq = value.clone().into_sequence().unwrap();
-        let k: String = from_redis_value(seq[0].clone()).unwrap();
-        let v = seq[1].clone().into_sequence().unwrap();
+    for entry in entries {
+        let entry = entry
+            .clone()
+            .into_sequence()
+            .map_err(|_| invalid_stream_response("expected a Redis stream entry array"))?;
+        let key: String = from_redis_value(
+            entry.first().cloned().ok_or_else(|| invalid_stream_response("Redis stream entry is missing its ID"))?,
+        )?;
+        let fields = entry
+            .get(1)
+            .cloned()
+            .ok_or_else(|| invalid_stream_response("Redis stream entry is missing its fields"))?
+            .into_sequence()
+            .map_err(|_| invalid_stream_response("expected Redis stream fields to be an array"))?;
+        if fields.len() < 6 {
+            return Err(invalid_stream_response("Redis stream entry has too few fields"));
+        }
+
+        for (index, expected_name) in [(0, "temperature"), (2, "humidity"), (4, "illumination")] {
+            let actual_name: String = from_redis_value(
+                fields
+                    .get(index)
+                    .cloned()
+                    .ok_or_else(|| invalid_stream_response("Redis stream field name is missing"))?,
+            )?;
+            if actual_name != expected_name {
+                return Err(invalid_stream_response("Redis stream field name is invalid"));
+            }
+        }
+
+        let value_at = |index| {
+            fields.get(index).cloned().ok_or_else(|| invalid_stream_response("Redis stream field value is missing"))
+        };
         ambient_conditions.insert(
-            k,
+            key,
             ambient_condition::new(
-                from_redis_value(v[1].clone()).unwrap(),
-                from_redis_value(v[3].clone()).unwrap(),
-                from_redis_value(v[5].clone()).unwrap(),
+                from_redis_value(value_at(1)?)?,
+                from_redis_value(value_at(3)?)?,
+                from_redis_value(value_at(5)?)?,
             ),
         );
     }
-    ambient_conditions
+    Ok(ambient_conditions)
+}
+
+/// Creates a typed Redis error for a malformed stream response.
+fn invalid_stream_response(message: &'static str) -> RedisError {
+    RedisError::from((ErrorKind::UnexpectedReturnType, message))
 }
 
 #[cfg(test)]
@@ -373,12 +411,55 @@ mod tests {
     #[test]
     fn parse_ambient_conditions_returns_map() {
         let val = sample_stream_value();
-        let map = parse_ambient_conditions(&val);
+        let map = parse_ambient_conditions(&val).unwrap();
 
         let condition = map.get("1-0").unwrap();
         assert!((condition.get_temperature() - 23.5).abs() < f64::EPSILON);
         assert!((condition.get_humidity() - 55.0).abs() < f64::EPSILON);
         assert!((condition.get_illumination() - 101.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn parse_ambient_conditions_rejects_malformed_responses() {
+        let malformed_values = [
+            Value::Nil,
+            Value::Array(vec![Value::Nil]),
+            Value::Array(vec![Value::Array(vec![Value::BulkString(b"1-0".to_vec())])]),
+            Value::Array(vec![Value::Array(vec![Value::BulkString(b"1-0".to_vec()), Value::Nil])]),
+            Value::Array(vec![Value::Array(vec![
+                Value::BulkString(b"1-0".to_vec()),
+                Value::Array(vec![Value::BulkString(b"temperature".to_vec())]),
+            ])]),
+            Value::Array(vec![Value::Array(vec![
+                Value::BulkString(b"1-0".to_vec()),
+                Value::Array(vec![
+                    Value::BulkString(b"unexpected".to_vec()),
+                    Value::BulkString(b"23.5".to_vec()),
+                    Value::BulkString(b"humidity".to_vec()),
+                    Value::BulkString(b"55.0".to_vec()),
+                    Value::BulkString(b"illumination".to_vec()),
+                    Value::BulkString(b"101.0".to_vec()),
+                ]),
+            ])]),
+            Value::Array(vec![Value::Array(vec![
+                Value::BulkString(b"1-0".to_vec()),
+                Value::Array(vec![
+                    Value::BulkString(b"temperature".to_vec()),
+                    Value::BulkString(b"not-a-number".to_vec()),
+                    Value::BulkString(b"humidity".to_vec()),
+                    Value::BulkString(b"55.0".to_vec()),
+                    Value::BulkString(b"illumination".to_vec()),
+                    Value::BulkString(b"101.0".to_vec()),
+                ]),
+            ])]),
+        ];
+
+        for (index, value) in malformed_values.into_iter().enumerate() {
+            assert!(
+                parse_ambient_conditions(&value).is_err(),
+                "malformed case {index} was accepted"
+            );
+        }
     }
 
     #[tokio::test]
