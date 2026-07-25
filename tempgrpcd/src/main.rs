@@ -104,8 +104,13 @@ async fn main() {
     let config = config::new(args);
     info!("config loaded");
 
-    infra::server::run(config).await;
-    tracing::info!("exiting...");
+    match infra::server::run(config).await {
+        Ok(()) => tracing::info!("exiting..."),
+        Err(error) => {
+            tracing::error!(error = %error, "tempgrpcd failed to start");
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(test)]

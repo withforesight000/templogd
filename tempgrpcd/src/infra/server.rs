@@ -12,7 +12,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tonic::{
     Request, Status,
-    metadata::MetadataValue,
+    metadata::{AsciiMetadataValue, errors::InvalidMetadataValue},
     service::Interceptor,
     transport::{Server, server::Router},
 };
@@ -32,19 +32,30 @@ use common::{gateway::datastore::DataStore, model::channel::datastore_operation:
 pub const REDIS_XRANGE_WITH_SAMPLING: &str = "xrange_with_sampling";
 type TempgrpcdController = GetAmbientConditionsImpl<GetAmbientConditionsUC, GetAmbientConditionsWithSamplingUC>;
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ServerError {
+    #[error("configured bearer token is invalid")]
+    InvalidBearerToken(#[source] InvalidMetadataValue),
+}
+
 #[derive(Clone)]
 struct AuthInterceptor {
-    token: String,
+    token: AsciiMetadataValue,
+}
+
+impl AuthInterceptor {
+    /// Creates an interceptor after validating the configured bearer token as gRPC metadata.
+    fn new(token: &str) -> Result<Self, InvalidMetadataValue> {
+        let token = format!("Bearer {token}").parse()?;
+        Ok(Self { token })
+    }
 }
 
 impl Interceptor for AuthInterceptor {
     #[instrument(level = "info", name = "infra.authenticate", skip_all)]
     fn call(&mut self, req: Request<()>) -> Result<Request<()>, Status> {
-        let correct_bearer_token = format!("Bearer {}", self.token);
-        let token: MetadataValue<_> = correct_bearer_token.parse().unwrap();
-
         match req.metadata().get("authorization") {
-            Some(t) if token == t => Ok(req),
+            Some(t) if self.token == t => Ok(req),
             _ => {
                 warn!("gRPC authentication failed");
                 Err(Status::unauthenticated("No valid auth token"))
@@ -56,10 +67,11 @@ impl Interceptor for AuthInterceptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tonic::metadata::MetadataValue;
 
     #[test]
     fn interceptor_allows_valid_token() {
-        let mut interceptor = AuthInterceptor { token: "secret".into() };
+        let mut interceptor = AuthInterceptor::new("secret").unwrap();
         let mut req = Request::new(());
         req.metadata_mut().insert("authorization", MetadataValue::try_from("Bearer secret").unwrap());
         assert!(interceptor.call(req).is_ok());
@@ -67,27 +79,39 @@ mod tests {
 
     #[test]
     fn interceptor_rejects_invalid_token() {
-        let mut interceptor = AuthInterceptor { token: "secret".into() };
+        let mut interceptor = AuthInterceptor::new("secret").unwrap();
         let req = Request::new(());
         let err = interceptor.call(req).unwrap_err();
         assert_eq!(err.code(), tonic::Code::Unauthenticated);
     }
+
+    #[test]
+    fn interceptor_rejects_invalid_configured_token() {
+        assert!(AuthInterceptor::new("secret\n").is_err());
+    }
 }
 
 /// Starts the tempgrpcd server, Redis worker, and shutdown handling.
+///
+/// Returns an error when the configured bearer token is not valid gRPC metadata.
 #[instrument(level = "info", name = "infra.run", parent = None)]
-pub async fn run(config: Arc<Config>) {
+pub(crate) async fn run(config: Arc<Config>) -> Result<(), ServerError> {
     run_with(
         config,
         start_datastore_task,
         start_signal_handler_task,
         boxed_start_grpc_server_task,
     )
-    .await;
+    .await
 }
 
 #[instrument(level = "debug", name = "infra.run_with", skip_all)]
-async fn run_with<SD, SS, SG, SGFut>(config: Arc<Config>, start_datastore: SD, start_signal_handler: SS, start_grpc: SG)
+async fn run_with<SD, SS, SG, SGFut>(
+    config: Arc<Config>,
+    start_datastore: SD,
+    start_signal_handler: SS,
+    start_grpc: SG,
+) -> Result<(), ServerError>
 where
     SD: FnOnce(Arc<Config>, tokio::sync::mpsc::Receiver<DatastoreOperation>, CancellationToken) -> JoinHandle<()>,
     SS: FnOnce(CancellationToken) -> SGFut,
@@ -95,15 +119,15 @@ where
     SG: FnOnce(
         tokio::sync::mpsc::Sender<DatastoreOperation>,
         Arc<Config>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Router> + Send>>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Router, ServerError>> + Send>>,
 {
     let cancellation_token = CancellationToken::new();
     let (tx, rx) = tokio::sync::mpsc::channel(32);
 
+    let grpc_server = start_grpc(tx, config.clone()).await?;
     let redis_task = start_datastore(config.clone(), rx, cancellation_token.clone());
     start_signal_handler(cancellation_token.clone()).await;
 
-    let grpc_server = start_grpc(tx, config.clone()).await;
     let addr = format!("{}:{}", config.get_server_bind_address(), config.get_server_port())
         .parse()
         .expect("Unable to parse socket address");
@@ -121,13 +145,14 @@ where
     }
 
     _ = tokio::join!(redis_task);
+    Ok(())
 }
 
 #[instrument(level = "debug", name = "infra.boxed_start_grpc_server_task", skip_all)]
 fn boxed_start_grpc_server_task(
     tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
     config: Arc<Config>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Router> + Send>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Router, ServerError>> + Send>> {
     // Tokio repeatedly calls a Future's `poll` method to drive its execution and
     // ask whether it can make progress: it returns `Pending` when it must wait
     // for I/O and `Ready` when it has finished. An `async fn` Future stores its
@@ -202,14 +227,18 @@ async fn start_signal_handler_task(cancellation_token: CancellationToken) {
 }
 
 #[instrument(level = "debug", name = "infra.start_grpc_server_task", parent = None, skip_all)]
-async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>, config: Arc<Config>) -> Router {
+async fn start_grpc_server_task(
+    tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
+    config: Arc<Config>,
+) -> Result<Router, ServerError> {
+    let auth_interceptor = AuthInterceptor::new(config.get_bearer_token()).map_err(ServerError::InvalidBearerToken)?;
     let get_ambient_conditions_uc = GetAmbientConditionsUC::new(tx.clone());
     let get_ambient_conditions_with_sampling_uc = GetAmbientConditionsWithSamplingUC::new(tx);
     let grpc_service = TempgrpcdController::new(get_ambient_conditions_uc, get_ambient_conditions_with_sampling_uc);
     let (reporter, health_server) = tonic_health::server::health_reporter();
     reporter.set_serving::<TempgrpcdServiceServer<TempgrpcdController>>().await;
 
-    Server::builder()
+    Ok(Server::builder()
         .trace_fn(|request| {
             let trace_id = super::request_tracing::new_trace_id();
             info_span!(
@@ -218,12 +247,7 @@ async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation
                 method = %request.uri().path(),
             )
         })
-        .add_service(TempgrpcdServiceServer::with_interceptor(
-            grpc_service,
-            AuthInterceptor {
-                token: config.get_bearer_token().to_string(),
-            },
-        ))
+        .add_service(TempgrpcdServiceServer::with_interceptor(grpc_service, auth_interceptor))
         .add_service(
             Builder::configure()
                 .register_encoded_file_descriptor_set(tempgrpcd_protos::tempgrpcd::v1::FILE_DESCRIPTOR_SET)
@@ -231,7 +255,7 @@ async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation
                 .build_v1()
                 .unwrap(),
         )
-        .add_service(health_server)
+        .add_service(health_server))
 }
 
 #[cfg(test)]
@@ -254,7 +278,19 @@ mod run_tests {
     async fn builds_grpc_router() {
         let config = crate::config::new(args());
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        let _router = start_grpc_server_task(tx, config).await;
+        let _router = start_grpc_server_task(tx, config).await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_invalid_bearer_token_before_building_router() {
+        let mut invalid_args = args();
+        invalid_args.bearer_token = "token\n".into();
+        let config = crate::config::new(invalid_args);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+
+        let result = start_grpc_server_task(tx, config).await;
+
+        assert!(matches!(result, Err(ServerError::InvalidBearerToken(_))));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -276,10 +312,13 @@ mod run_tests {
 
         let start_grpc = |tx: tokio::sync::mpsc::Sender<DatastoreOperation>, cfg: Arc<Config>| {
             Box::pin(start_grpc_server_task(tx, cfg))
-                as std::pin::Pin<Box<dyn std::future::Future<Output = Router> + Send>>
+                as std::pin::Pin<Box<dyn std::future::Future<Output = Result<Router, ServerError>> + Send>>
         };
 
         let fut = run_with(config, start_datastore, start_signal_handler, start_grpc);
-        tokio::time::timeout(std::time::Duration::from_secs(2), fut).await.expect("server did not shut down in time");
+        tokio::time::timeout(std::time::Duration::from_secs(2), fut)
+            .await
+            .expect("server did not shut down in time")
+            .expect("server failed to start");
     }
 }
