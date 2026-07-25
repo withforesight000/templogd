@@ -20,7 +20,7 @@ pub struct GetAmbientConditionsImpl<G: GetAmbientConditions, S: GetAmbientCondit
 
 impl<G: GetAmbientConditions + Debug, S: GetAmbientConditionsWithSampling + Debug> GetAmbientConditionsImpl<G, S> {
     /// Creates a controller with plain and sampled ambient-condition use cases.
-    #[instrument(level = "info", name = "controller.new", skip_all)]
+    #[instrument(level = "info", name = "controller.get_ambient_conditions.new", skip_all)]
     pub fn new(get_ambient_conditions_uc: G, get_ambient_conditions_with_sampling: S) -> Self {
         Self {
             get_ambient_conditions_uc,
@@ -89,12 +89,15 @@ impl<
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     use common::model::ambient_condition::AmbientCondition;
     use pbjson_types::Timestamp;
     use tempgrpcd_protos::tempgrpcd::v1::GetAmbientConditionsRequest;
     use tokio::sync::mpsc;
     use tonic::Request;
+    use tracing::{Id, Subscriber, span::Attributes};
+    use tracing_subscriber::{Layer, layer::Context, layer::SubscriberExt};
 
     use crate::usecase::error::UsecaseError;
 
@@ -120,6 +123,20 @@ mod tests {
     #[derive(Debug)]
     struct StubSamplingUc {
         tx: mpsc::UnboundedSender<&'static str>,
+    }
+
+    #[derive(Clone, Default)]
+    struct SpanRecorder {
+        names: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl<S> Layer<S> for SpanRecorder
+    where
+        S: Subscriber,
+    {
+        fn on_new_span(&self, attrs: &Attributes<'_>, _id: &Id, _context: Context<'_, S>) {
+            self.names.lock().unwrap().push(attrs.metadata().name());
+        }
     }
 
     #[async_trait::async_trait]
@@ -155,6 +172,22 @@ mod tests {
             end_time,
             samples,
         })
+    }
+
+    #[test]
+    fn constructor_uses_a_component_specific_span_name() {
+        let recorder = SpanRecorder::default();
+        let names = recorder.names.clone();
+        let subscriber = tracing_subscriber::registry().with(recorder);
+
+        tracing::subscriber::with_default(subscriber, || {
+            let (tx_primary, _rx_primary) = mpsc::unbounded_channel();
+            let (tx_sampling, _rx_sampling) = mpsc::unbounded_channel();
+            let _svc =
+                GetAmbientConditionsImpl::new(StubPrimaryUc { tx: tx_primary }, StubSamplingUc { tx: tx_sampling });
+        });
+
+        assert!(names.lock().unwrap().contains(&"controller.get_ambient_conditions.new"));
     }
 
     #[tokio::test]
