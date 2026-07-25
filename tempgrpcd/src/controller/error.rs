@@ -53,7 +53,8 @@ mod tests {
     fn maps_storage_error_without_exposing_details() {
         use common::model::repository::datastore::DataStoreError;
 
-        let error = UsecaseError::from(DataStoreError::Unavailable("redis connection refused".into()));
+        let redis_error = redis::RedisError::from((redis::ErrorKind::Io, "redis connection refused"));
+        let error = UsecaseError::from(DataStoreError::from(redis_error));
         let status: Status = error.into();
 
         assert_eq!(status.code(), tonic::Code::Unavailable);

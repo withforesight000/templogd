@@ -227,7 +227,7 @@ mod tests {
         let fetch_err = resp_rx1.await.unwrap().unwrap_err();
         assert!(matches!(
             fetch_err,
-            common::model::repository::datastore::DataStoreError::Unavailable(message) if message.contains("fetch failed")
+            common::model::repository::datastore::DataStoreError::Unavailable(error) if error.to_string().contains("fetch failed")
         ));
 
         let (resp_tx2, resp_rx2) = oneshot::channel();
@@ -243,7 +243,7 @@ mod tests {
         let sampling_err = resp_rx2.await.unwrap().unwrap_err();
         assert!(matches!(
             sampling_err,
-            common::model::repository::datastore::DataStoreError::Unavailable(message) if message.contains("sampling failed")
+            common::model::repository::datastore::DataStoreError::Unavailable(error) if error.to_string().contains("sampling failed")
         ));
 
         token.cancel();

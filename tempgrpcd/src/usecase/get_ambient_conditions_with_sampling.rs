@@ -124,7 +124,11 @@ mod tests {
 
         tokio::spawn(async move {
             if let Some(DatastoreOperation::FetchAmbientConditionsWithSampling { resp, .. }) = rx.recv().await {
-                resp.send(Err(DataStoreError::Unavailable("redis unavailable".into()))).unwrap();
+                resp.send(Err(DataStoreError::from(redis::RedisError::from((
+                    redis::ErrorKind::Io,
+                    "redis unavailable",
+                )))))
+                .unwrap();
             }
         });
 
@@ -132,7 +136,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            UsecaseError::Storage(DataStoreError::Unavailable(message)) if message == "redis unavailable"
+            UsecaseError::Storage(DataStoreError::Unavailable(error)) if error.to_string().contains("redis unavailable")
         ));
     }
 }
