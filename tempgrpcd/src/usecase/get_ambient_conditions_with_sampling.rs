@@ -1,7 +1,7 @@
 use common::model::ambient_condition::AmbientCondition;
 use common::model::channel::datastore_operation::DatastoreOperation;
 use std::collections::HashMap;
-use tracing::{debug, info, instrument};
+use tracing::{Span, debug, info, instrument};
 
 use crate::usecase::error::UsecaseError;
 use crate::usecase::port::GetAmbientConditionsWithSampling;
@@ -39,6 +39,7 @@ impl GetAmbientConditionsWithSampling for GetAmbientConditionsWithSamplingUC {
                 start: start_time_seconds.to_string(),
                 end: end_time_seconds.to_string(),
                 samples: samples.to_string(),
+                span: Span::current(),
                 resp: resp_tx,
             })
             .await
@@ -79,6 +80,7 @@ mod tests {
                 end,
                 samples,
                 resp,
+                ..
             }) = rx.recv().await
             {
                 assert_eq!(start, "0");

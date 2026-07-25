@@ -8,6 +8,8 @@ pub enum DatastoreOperation {
     FetchAmbientConditions {
         start: String,
         end: String,
+        /// Span of the gRPC request that originated this datastore operation.
+        span: tracing::Span,
         resp: tokio::sync::oneshot::Sender<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>,
     },
     /// Ask the datastore worker to fetch ambient conditions using Redis sampling.
@@ -15,6 +17,8 @@ pub enum DatastoreOperation {
         start: String,
         end: String,
         samples: String,
+        /// Span of the gRPC request that originated this datastore operation.
+        span: tracing::Span,
         resp: tokio::sync::oneshot::Sender<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>,
     },
     /// Persist one ambient condition reading to Redis.
@@ -33,9 +37,10 @@ mod tests {
         let op = DatastoreOperation::FetchAmbientConditions {
             start: "s".to_string(),
             end: "e".to_string(),
+            span: tracing::Span::current(),
             resp: tx,
         };
-        if let DatastoreOperation::FetchAmbientConditions { start, end, resp } = op {
+        if let DatastoreOperation::FetchAmbientConditions { start, end, resp, .. } = op {
             assert_eq!(start, "s");
             assert_eq!(end, "e");
             resp.send(Ok(std::collections::HashMap::new())).unwrap();

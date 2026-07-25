@@ -99,6 +99,7 @@ mod tests {
         tx.send(DatastoreOperation::FetchAmbientConditions {
             start: "0".into(),
             end: "1".into(),
+            span: tracing::Span::current(),
             resp: resp_tx,
         })
         .await
@@ -123,6 +124,7 @@ mod tests {
             start: "0".into(),
             end: "1".into(),
             samples: "2".into(),
+            span: tracing::Span::current(),
             resp: resp_tx,
         })
         .await

@@ -1,7 +1,7 @@
 use common::model::ambient_condition::AmbientCondition;
 use common::model::channel::datastore_operation::DatastoreOperation;
 use std::collections::HashMap;
-use tracing::{debug, info, instrument};
+use tracing::{Span, debug, info, instrument};
 
 use crate::usecase::error::UsecaseError;
 use crate::usecase::port::GetAmbientConditions;
@@ -33,6 +33,7 @@ impl GetAmbientConditions for GetAmbientConditionsUC {
             .send(DatastoreOperation::FetchAmbientConditions {
                 start: start_time_seconds.to_string(),
                 end: end_time_seconds.to_string(),
+                span: Span::current(),
                 resp: resp_tx,
             })
             .await
@@ -66,7 +67,7 @@ mod tests {
 
         // Spawn receiver to emulate fetch_from_redis
         let handle = tokio::spawn(async move {
-            if let Some(DatastoreOperation::FetchAmbientConditions { start, end, resp }) = rx.recv().await {
+            if let Some(DatastoreOperation::FetchAmbientConditions { start, end, resp, .. }) = rx.recv().await {
                 assert_eq!(start, "0");
                 assert_eq!(end, "1");
                 let mut map = std::collections::HashMap::new();

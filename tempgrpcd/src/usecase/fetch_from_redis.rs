@@ -1,6 +1,6 @@
 use common::model::repository::datastore::DataStoreRepository;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, instrument};
+use tracing::{Instrument, debug, error, info, instrument};
 
 use common::model::channel::datastore_operation::DatastoreOperation;
 
@@ -22,48 +22,86 @@ pub async fn run(
                     break;
                 };
 
-                debug!(operation = "datastore_operation", "Received operation from gRPC request task");
+                log_received_operation(&operation);
                 match operation {
-                        DatastoreOperation::FetchAmbientConditions { start, end, resp } => {
-                            let res = client.fetch_ambient_conditions(start, end).await.map_err(Into::into);
+                    DatastoreOperation::FetchAmbientConditions { start, end, span, resp } => {
+                        let res = client
+                            .fetch_ambient_conditions(start, end)
+                            .instrument(span.clone())
+                            .await
+                            .map_err(Into::into);
+                        span.in_scope(|| {
                             info!(
                                 operation = "redis.fetch_ambient_conditions",
                                 result = res.is_ok(),
                                 "Redis fetch completed"
                             );
+                        });
 
-                            let result = resp.send(res);
-                            if let Err(e) = result {
-                                error!(error = ?e, operation = "redis.fetch_ambient_conditions", "Failed to return Redis fetch result");
-                            }
-                            debug!(operation = "redis.fetch_ambient_conditions", "Redis fetch result returned");
+                        let result = resp.send(res);
+                        if let Err(error) = result {
+                            span.in_scope(|| {
+                                error!(error = ?error, operation = "redis.fetch_ambient_conditions", "Failed to return Redis fetch result");
+                            });
                         }
-                        DatastoreOperation::FetchAmbientConditionsWithSampling { start, end, samples, resp } => {
-                            let res = client
-                                .fetch_ambient_conditions_with_sampling(start, end, samples)
-                                .await
-                                .map_err(Into::into);
+                        span.in_scope(|| {
+                            debug!(operation = "redis.fetch_ambient_conditions", "Redis fetch result returned");
+                        });
+                    }
+                    DatastoreOperation::FetchAmbientConditionsWithSampling { start, end, samples, span, resp } => {
+                        let res = client
+                            .fetch_ambient_conditions_with_sampling(start, end, samples)
+                            .instrument(span.clone())
+                            .await
+                            .map_err(Into::into);
+                        span.in_scope(|| {
                             info!(
                                 operation = "redis.fetch_ambient_conditions_with_sampling",
                                 result = res.is_ok(),
                                 "Redis sampling fetch completed"
                             );
+                        });
 
-                            let result = resp.send(res);
-                            if let Err(e) = result {
-                                error!(error = ?e, operation = "redis.fetch_ambient_conditions_with_sampling", "Failed to return Redis sampling result");
-                            }
+                        let result = resp.send(res);
+                        if let Err(error) = result {
+                            span.in_scope(|| {
+                                error!(error = ?error, operation = "redis.fetch_ambient_conditions_with_sampling", "Failed to return Redis sampling result");
+                            });
+                        }
+                        span.in_scope(|| {
                             debug!(operation = "redis.fetch_ambient_conditions_with_sampling", "Redis sampling result returned");
-                        }
-                        DatastoreOperation::SaveAmbientCondition { ambient_condition: _ } => {
-                            error!(operation = "redis.save_ambient_condition", "Received unsupported save operation in tempgrpcd Redis worker");
-                        }
+                        });
+                    }
+                    DatastoreOperation::SaveAmbientCondition { ambient_condition: _ } => {
+                        error!(operation = "redis.save_ambient_condition", "Received unsupported save operation in tempgrpcd Redis worker");
+                    }
                 }
             },
             _ = cancellation_token.cancelled() => {
                 info!(reason = "cancellation_requested", "Redis worker stopped");
                 break;
             }
+        }
+    }
+}
+
+/// Logs a received operation while entering its originating request span.
+fn log_received_operation(operation: &DatastoreOperation) {
+    match operation {
+        DatastoreOperation::FetchAmbientConditions { span, .. }
+        | DatastoreOperation::FetchAmbientConditionsWithSampling { span, .. } => {
+            span.in_scope(|| {
+                debug!(
+                    operation = "datastore_operation",
+                    "Received operation from gRPC request task"
+                );
+            });
+        }
+        DatastoreOperation::SaveAmbientCondition { .. } => {
+            debug!(
+                operation = "datastore_operation",
+                "Received operation from gRPC request task"
+            );
         }
     }
 }
@@ -131,6 +169,7 @@ mod tests {
             tx.send(DatastoreOperation::FetchAmbientConditions {
                 start: "0".into(),
                 end: "1".into(),
+                span: tracing::Span::current(),
                 resp: resp_tx1,
             })
             .await
@@ -142,6 +181,7 @@ mod tests {
                 start: "0".into(),
                 end: "1".into(),
                 samples: "2".into(),
+                span: tracing::Span::current(),
                 resp: resp_tx2,
             })
             .await
@@ -179,6 +219,7 @@ mod tests {
         tx.send(DatastoreOperation::FetchAmbientConditions {
             start: "0".into(),
             end: "1".into(),
+            span: tracing::Span::current(),
             resp: resp_tx1,
         })
         .await
@@ -194,6 +235,7 @@ mod tests {
             start: "0".into(),
             end: "1".into(),
             samples: "2".into(),
+            span: tracing::Span::current(),
             resp: resp_tx2,
         })
         .await
