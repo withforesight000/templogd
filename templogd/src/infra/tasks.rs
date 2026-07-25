@@ -5,7 +5,7 @@ use common::gateway::nature_remo_client::NatureRemoClient;
 use common::model::repository::datastore::DataStoreRepository;
 use common::model::repository::nature_remo::NatureRemo;
 use tokio::sync::mpsc;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, info, info_span, instrument};
 
@@ -13,16 +13,35 @@ use crate::{config::Config, controller};
 use common::infra::{async_redis_client::AsyncRedisCrateClient, http_client::ReqwestClient};
 use common::model::channel::datastore_operation::DatastoreOperation;
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum TaskError {
+    #[error("failed to connect to Redis")]
+    ConnectRedis(#[source] redis::RedisError),
+    #[error("{task} background task failed")]
+    BackgroundTask {
+        task: &'static str,
+        #[source]
+        source: tokio::task::JoinError,
+    },
+    #[error("{task} background task stopped unexpectedly")]
+    BackgroundTaskStopped { task: &'static str },
+}
+
+type RedisDatastoreFuture = Pin<Box<dyn Future<Output = Result<DataStore<AsyncRedisCrateClient>, TaskError>> + Send>>;
+
 /// Starts templogd's polling and Redis workers and coordinates shutdown.
+///
+/// Returns a failure when Redis initialization fails or either critical worker
+/// panics or stops before shutdown is requested.
 #[instrument(level = "info", name = "infra.run", parent = None, skip_all)]
-pub async fn run(config: Arc<Config>) {
+pub async fn run(config: Arc<Config>) -> Result<(), TaskError> {
     run_with(
         config,
         make_signal_handlers,
         make_nature_remo_client_factory,
         make_redis_client_factory,
     )
-    .await;
+    .await
 }
 
 #[instrument(level = "debug", name = "infra.run_with", skip_all)]
@@ -31,7 +50,8 @@ async fn run_with<S, SFut, NProvider, NFactory, NClient, DProvider, DFactory, DF
     shutdown: S,
     nature_remo_client_factory: NProvider,
     datastore_factory: DProvider,
-) where
+) -> Result<(), TaskError>
+where
     S: FnOnce(CancellationToken) -> SFut,
     SFut: Future<Output = ()> + Send,
     NProvider: FnOnce(Arc<Config>) -> NFactory,
@@ -39,7 +59,7 @@ async fn run_with<S, SFut, NProvider, NFactory, NClient, DProvider, DFactory, DF
     NClient: NatureRemo + Send + 'static,
     DProvider: FnOnce(Arc<Config>) -> DFactory,
     DFactory: FnOnce() -> DFut + Send + 'static,
-    DFut: Future<Output = DClient> + Send + 'static,
+    DFut: Future<Output = Result<DClient, TaskError>> + Send + 'static,
     DClient: DataStoreRepository + Send + 'static,
 {
     let cancellation_token = CancellationToken::new();
@@ -62,44 +82,87 @@ async fn run_with<S, SFut, NProvider, NFactory, NClient, DProvider, DFactory, DF
 
     enum FirstCompletion {
         Shutdown,
-        NatureRemo,
-        Datastore,
+        NatureRemo(Result<(), tokio::task::JoinError>),
+        Datastore(Result<Result<(), TaskError>, tokio::task::JoinError>),
     }
 
     let first_completion = tokio::select! {
+        biased;
         _ = &mut shutdown_future => {
             info!(reason = "shutdown_requested", "Shutdown requested");
             FirstCompletion::Shutdown
         },
         result = &mut nature_remo_api_task => {
-            log_task_result("nature_remo", result);
-            FirstCompletion::NatureRemo
+            FirstCompletion::NatureRemo(result)
         },
         result = &mut datastore_task => {
-            log_task_result("redis", result);
-            FirstCompletion::Datastore
+            FirstCompletion::Datastore(result)
         },
     };
 
     cancellation_token.cancel();
     match first_completion {
         FirstCompletion::Shutdown => {
-            let _ = nature_remo_api_task.await;
-            let _ = datastore_task.await;
+            let (nature_result, datastore_result) = tokio::join!(nature_remo_api_task, datastore_task);
+            handle_shutdown_task_result("nature_remo", nature_result)?;
+            handle_shutdown_datastore_result(datastore_result)
         }
-        FirstCompletion::NatureRemo => {
-            let _ = datastore_task.await;
+        FirstCompletion::NatureRemo(result) => {
+            log_shutdown_datastore_result(datastore_task.await);
+            handle_active_task_result("nature_remo", result)
         }
-        FirstCompletion::Datastore => {
-            let _ = nature_remo_api_task.await;
+        FirstCompletion::Datastore(result) => {
+            log_shutdown_task_result("nature_remo", nature_remo_api_task.await);
+            handle_active_datastore_result(result)
         }
     }
 }
 
-fn log_task_result(task: &'static str, result: Result<(), JoinError>) {
+fn handle_active_task_result(task: &'static str, result: Result<(), tokio::task::JoinError>) -> Result<(), TaskError> {
     match result {
-        Ok(()) => info!(task, "Background task completed"),
-        Err(error) => error!(task, error = %error, "Background task failed"),
+        Ok(()) => Err(TaskError::BackgroundTaskStopped { task }),
+        Err(source) => Err(TaskError::BackgroundTask { task, source }),
+    }
+}
+
+fn handle_active_datastore_result(
+    result: Result<Result<(), TaskError>, tokio::task::JoinError>,
+) -> Result<(), TaskError> {
+    match result {
+        Ok(Ok(())) => Err(TaskError::BackgroundTaskStopped { task: "redis" }),
+        Ok(Err(error)) => Err(error),
+        Err(source) => Err(TaskError::BackgroundTask { task: "redis", source }),
+    }
+}
+
+fn handle_shutdown_task_result(
+    task: &'static str,
+    result: Result<(), tokio::task::JoinError>,
+) -> Result<(), TaskError> {
+    result.map_err(|source| TaskError::BackgroundTask { task, source })
+}
+
+fn handle_shutdown_datastore_result(
+    result: Result<Result<(), TaskError>, tokio::task::JoinError>,
+) -> Result<(), TaskError> {
+    match result {
+        Ok(result) => result,
+        Err(source) => Err(TaskError::BackgroundTask { task: "redis", source }),
+    }
+}
+
+fn log_shutdown_task_result(task: &'static str, result: Result<(), tokio::task::JoinError>) {
+    match result {
+        Ok(()) => info!(task, "Background task completed during shutdown"),
+        Err(error) => error!(task, error = %error, "Background task failed during shutdown"),
+    }
+}
+
+fn log_shutdown_datastore_result(result: Result<Result<(), TaskError>, tokio::task::JoinError>) {
+    match result {
+        Ok(Ok(())) => info!(task = "redis", "Background task completed during shutdown"),
+        Ok(Err(error)) => error!(task = "redis", error = %error, "Background task failed during shutdown"),
+        Err(error) => error!(task = "redis", error = %error, "Background task panicked during shutdown"),
     }
 }
 
@@ -116,13 +179,11 @@ fn make_nature_remo_client_factory(config: Arc<Config>) -> impl Fn() -> NatureRe
 }
 
 #[instrument(level = "debug", name = "infra.make_redis_client_factory", skip_all)]
-fn make_redis_client_factory(
-    config: Arc<Config>,
-) -> impl Fn() -> Pin<Box<dyn Future<Output = DataStore<AsyncRedisCrateClient>> + Send>> {
-    fn redis_client(url: String) -> Pin<Box<dyn Future<Output = DataStore<AsyncRedisCrateClient>> + Send>> {
+fn make_redis_client_factory(config: Arc<Config>) -> impl Fn() -> RedisDatastoreFuture {
+    fn redis_client(url: String) -> RedisDatastoreFuture {
         Box::pin(async move {
-            let redis_client = AsyncRedisCrateClient::new(&url).await.expect("failed to connect to Redis");
-            DataStore::new(redis_client).await
+            let redis_client = AsyncRedisCrateClient::new(&url).await.map_err(TaskError::ConnectRedis)?;
+            Ok(DataStore::new(redis_client).await)
         })
     }
 
@@ -162,17 +223,18 @@ fn start_datastore_task<F, DFut, DClient>(
     cancellation_token: CancellationToken,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     redis_client: F,
-) -> JoinHandle<()>
+) -> JoinHandle<Result<(), TaskError>>
 where
     F: FnOnce() -> DFut + Send + 'static,
-    DFut: Future<Output = DClient> + Send + 'static,
+    DFut: Future<Output = Result<DClient, TaskError>> + Send + 'static,
     DClient: DataStoreRepository + Send + 'static,
 {
     let task_span = info_span!("infra.redis.task");
     tokio::spawn(
         async move {
-            let client = redis_client().await;
+            let client = redis_client().await?;
             controller::log_to_redis::run(config, client, rx, cancellation_token).await;
+            Ok(())
         }
         .instrument(task_span),
     )
@@ -280,27 +342,47 @@ mod tests {
         };
 
         let nature_factory = |_cfg: Arc<Config>| move || StubNatureRemoOk;
-        let datastore_factory = |_cfg: Arc<Config>| move || async move { StubDatastore };
+        let datastore_factory = |_cfg: Arc<Config>| move || async move { Ok(StubDatastore) };
 
-        run_with(cfg, shutdown, nature_factory, datastore_factory).await;
+        run_with(cfg, shutdown, nature_factory, datastore_factory).await.unwrap();
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn run_with_handles_task_failure_and_cancels() {
         let cfg = config();
-        let shutdown = |token: CancellationToken| {
-            async move {
-                // Let the spawned task run first.
-                tokio::task::yield_now().await;
-                token.cancel();
+        let shutdown = |_token: CancellationToken| std::future::pending();
+
+        let nature_factory = |_cfg: Arc<Config>| move || StubNatureRemoPanic;
+        let datastore_factory = |_cfg: Arc<Config>| move || async move { Ok(StubDatastore) };
+
+        let error = run_with(cfg, shutdown, nature_factory, datastore_factory).await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            TaskError::BackgroundTask {
+                task: "nature_remo",
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_with_returns_datastore_initialization_failures() {
+        let cfg = config();
+        let shutdown = |_token: CancellationToken| std::future::pending();
+        let nature_factory = |_cfg: Arc<Config>| move || StubNatureRemoOk;
+        let datastore_factory = |_cfg: Arc<Config>| {
+            move || async move {
+                Err::<StubDatastore, _>(TaskError::ConnectRedis(redis::RedisError::from((
+                    redis::ErrorKind::InvalidClientConfig,
+                    "invalid Redis configuration",
+                ))))
             }
         };
 
-        let nature_factory = |_cfg: Arc<Config>| move || StubNatureRemoPanic;
-        let datastore_factory = |_cfg: Arc<Config>| move || async move { StubDatastore };
+        let error = run_with(cfg, shutdown, nature_factory, datastore_factory).await.unwrap_err();
 
-        // Should not panic even if one of the tasks panics.
-        run_with(cfg, shutdown, nature_factory, datastore_factory).await;
+        assert!(matches!(error, TaskError::ConnectRedis(_)));
     }
 
     #[test]
@@ -405,7 +487,7 @@ mod tests {
         let saved_clone = saved.clone();
 
         let handle = start_datastore_task(cfg, token.clone(), rx, move || async move {
-            StubDatastoreSave { saved: saved_clone }
+            Ok(StubDatastoreSave { saved: saved_clone })
         });
 
         tx.send(DatastoreOperation::SaveAmbientCondition {
@@ -423,7 +505,7 @@ mod tests {
         .unwrap();
 
         token.cancel();
-        handle.await.unwrap();
+        handle.await.unwrap().unwrap();
         assert_eq!(saved.load(Ordering::SeqCst), 1);
     }
 }

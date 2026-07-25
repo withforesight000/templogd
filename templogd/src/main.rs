@@ -100,8 +100,13 @@ async fn main() {
     let config = config::new(args);
     info!("config loaded");
 
-    infra::tasks::run(config).await;
-    info!("exiting...");
+    match infra::tasks::run(config).await {
+        Ok(()) => info!("exiting..."),
+        Err(error) => {
+            tracing::error!(error = %error, "templogd failed");
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(test)]
