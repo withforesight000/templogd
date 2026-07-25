@@ -104,7 +104,8 @@ fn log_received_operation(operation: &DatastoreOperation) {
         DatastoreOperation::SaveAmbientCondition { .. } => {
             debug!(
                 operation = "datastore_operation",
-                "Received operation from gRPC request task"
+                source = "unknown",
+                "Received operation without a gRPC request span"
             );
         }
     }
