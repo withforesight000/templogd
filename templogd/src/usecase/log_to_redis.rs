@@ -32,14 +32,18 @@ pub async fn run(
                                 Err(error) => error!(error = %error, operation = "redis.save_ambient_condition", "Failed to save ambient condition to Redis"),
                             }
                         }
-                        DatastoreOperation::FetchAmbientConditions { resp, .. } => {
+                        DatastoreOperation::FetchAmbientConditions { span, resp, .. } => {
                             let error = redis::RedisError::from((ErrorKind::InvalidClientConfig, "unsupported operation"));
-                            error!(operation = "redis.fetch_ambient_conditions", "Received unsupported operation in templogd Redis worker");
+                            span.in_scope(|| {
+                                error!(operation = "redis.fetch_ambient_conditions", "Received unsupported operation in templogd Redis worker");
+                            });
                             let _ = resp.send(Err(error.into()));
                         }
-                        DatastoreOperation::FetchAmbientConditionsWithSampling { resp, .. } => {
+                        DatastoreOperation::FetchAmbientConditionsWithSampling { span, resp, .. } => {
                             let error = redis::RedisError::from((ErrorKind::InvalidClientConfig, "unsupported operation"));
-                            error!(operation = "redis.fetch_ambient_conditions_with_sampling", "Received unsupported operation in templogd Redis worker");
+                            span.in_scope(|| {
+                                error!(operation = "redis.fetch_ambient_conditions_with_sampling", "Received unsupported operation in templogd Redis worker");
+                            });
                             let _ = resp.send(Err(error.into()));
                         }
                 }
@@ -58,7 +62,30 @@ mod tests {
     use common::model::ambient_condition;
     use mockall::mock;
     use redis::{RedisError, ToRedisArgs, Value};
+    use std::sync::{Arc, Mutex};
     use tokio::sync::mpsc;
+    use tracing::{Event, Subscriber, info_span};
+    use tracing_subscriber::{
+        Layer,
+        layer::{Context, SubscriberExt},
+        registry::LookupSpan,
+    };
+
+    #[derive(Clone, Default)]
+    struct EventSpanRecorder {
+        names: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl<S> Layer<S> for EventSpanRecorder
+    where
+        S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+    {
+        fn on_event(&self, _event: &Event<'_>, context: Context<'_, S>) {
+            if let Some(span) = context.lookup_current() {
+                self.names.lock().unwrap().push(span.metadata().name());
+            }
+        }
+    }
 
     mock! {
         pub DataStore {}
@@ -146,5 +173,47 @@ mod tests {
         )
         .await
         .expect("worker did not stop after the request channel closed");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn logs_unsupported_fetches_in_their_request_spans() {
+        let recorder = EventSpanRecorder::default();
+        let names = recorder.names.clone();
+        let subscriber = tracing_subscriber::registry().with(recorder);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let datastore = MockDataStore::new();
+        let (tx, rx) = mpsc::channel(2);
+        let handle = tokio::spawn(run(config(), datastore, rx, CancellationToken::new()));
+
+        let (fetch_tx, fetch_rx) = tokio::sync::oneshot::channel();
+        tx.send(DatastoreOperation::FetchAmbientConditions {
+            start: "0".into(),
+            end: "1".into(),
+            span: info_span!("test.fetch_request"),
+            resp: fetch_tx,
+        })
+        .await
+        .unwrap();
+        assert!(fetch_rx.await.unwrap().is_err());
+
+        let (sampling_tx, sampling_rx) = tokio::sync::oneshot::channel();
+        tx.send(DatastoreOperation::FetchAmbientConditionsWithSampling {
+            start: "0".into(),
+            end: "1".into(),
+            samples: "2".into(),
+            span: info_span!("test.sampling_request"),
+            resp: sampling_tx,
+        })
+        .await
+        .unwrap();
+        assert!(sampling_rx.await.unwrap().is_err());
+
+        drop(tx);
+        handle.await.unwrap();
+
+        let names = names.lock().unwrap();
+        assert!(names.contains(&"test.fetch_request"));
+        assert!(names.contains(&"test.sampling_request"));
     }
 }
