@@ -38,10 +38,12 @@ pub async fn run(
                             );
                         });
 
-                        let result = resp.send(res);
-                        if let Err(error) = result {
+                        if resp.send(res).is_err() {
                             span.in_scope(|| {
-                                error!(error = ?error, operation = "redis.fetch_ambient_conditions", "Failed to return Redis fetch result");
+                                error!(
+                                    operation = "redis.fetch_ambient_conditions",
+                                    "Redis fetch result receiver was dropped"
+                                );
                             });
                         }
                         span.in_scope(|| {
@@ -62,10 +64,12 @@ pub async fn run(
                             );
                         });
 
-                        let result = resp.send(res);
-                        if let Err(error) = result {
+                        if resp.send(res).is_err() {
                             span.in_scope(|| {
-                                error!(error = ?error, operation = "redis.fetch_ambient_conditions_with_sampling", "Failed to return Redis sampling result");
+                                error!(
+                                    operation = "redis.fetch_ambient_conditions_with_sampling",
+                                    "Redis sampling result receiver was dropped"
+                                );
                             });
                         }
                         span.in_scope(|| {
@@ -248,6 +252,47 @@ mod tests {
 
         token.cancel();
         run_fut.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn handles_dropped_response_receivers_without_logging_results() {
+        let mut datastore = MockDataStore::new();
+        datastore
+            .expect_fetch_ambient_conditions()
+            .returning(|_: String, _: String| Ok(std::collections::HashMap::new()));
+        datastore
+            .expect_fetch_ambient_conditions_with_sampling()
+            .returning(|_: String, _: String, _: String| Ok(std::collections::HashMap::new()));
+
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        let token = CancellationToken::new();
+        let handle = tokio::spawn(run(datastore, rx, token.clone()));
+
+        let (fetch_tx, fetch_rx) = oneshot::channel();
+        drop(fetch_rx);
+        tx.send(DatastoreOperation::FetchAmbientConditions {
+            start: "0".into(),
+            end: "1".into(),
+            span: tracing::Span::current(),
+            resp: fetch_tx,
+        })
+        .await
+        .unwrap();
+
+        let (sampling_tx, sampling_rx) = oneshot::channel();
+        drop(sampling_rx);
+        tx.send(DatastoreOperation::FetchAmbientConditionsWithSampling {
+            start: "0".into(),
+            end: "1".into(),
+            samples: "2".into(),
+            span: tracing::Span::current(),
+            resp: sampling_tx,
+        })
+        .await
+        .unwrap();
+
+        drop(tx);
+        handle.await.unwrap();
     }
 
     #[tokio::test(flavor = "current_thread")]
