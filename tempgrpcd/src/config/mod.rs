@@ -78,6 +78,8 @@ mod tests {
             bearer_token: "token".into(),
             redis_host: "localhost".into(),
             redis_port: 6379,
+            log_format: crate::LogFormat::Json,
+            log_level: crate::LogLevel::Info,
         }
     }
 

@@ -52,12 +52,16 @@ Add a `"samples": 24` field when you want the Lua-powered down-sampling that app
 - `TEMPLOGD_NATURE_REMO_DEVICE_ID` – device identifier to filter the API response.
 - `TEMPLOGD_REDIS_HOST` (default: `127.0.0.1`).
 - `TEMPLOGD_REDIS_PORT` (default: `6379`).
+- `TEMPLOGD_LOG_FORMAT` (default: `json`; supported values: `json`, `text`).
+- `TEMPLOGD_LOG_LEVEL` (default: `info`; supported values: `trace`, `debug`, `info`, `warn`, `error`, `off`).
 
 ### tempgrpcd
 - `TEMPGRPCD_SERVER_BIND_ADDRESS` – address to bind (e.g. `0.0.0.0`).
 - `TEMPGRPCD_SERVER_PORT` – listening port.
 - `TEMPGRPCD_BEARER_TOKEN` – token expected in the `authorization` metadata header.
 - `TEMPGRPCD_REDIS_HOST` / `TEMPGRPCD_REDIS_PORT` – Redis endpoint shared with `templogd`.
+- `TEMPGRPCD_LOG_FORMAT` (default: `json`; supported values: `json`, `text`).
+- `TEMPGRPCD_LOG_LEVEL` (default: `info`; supported values: `trace`, `debug`, `info`, `warn`, `error`, `off`).
 
 ## Docker & Compose
 The multi-stage `Dockerfile` uses `cargo-chef` to cache dependencies and exposes two stages named `templogd` and `tempgrpcd`. Build and run the entire stack with Redis using Docker Compose:

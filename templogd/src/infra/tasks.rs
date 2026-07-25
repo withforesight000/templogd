@@ -232,6 +232,8 @@ mod tests {
             device_id: "device".to_string(),
             redis_host: "host".to_string(),
             redis_port: 6379,
+            log_format: crate::LogFormat::Json,
+            log_level: crate::LogLevel::Info,
         })
     }
 
@@ -273,6 +275,8 @@ mod tests {
             device_id: "device".into(),
             redis_host: "host".into(),
             redis_port: 6379,
+            log_format: crate::LogFormat::Json,
+            log_level: crate::LogLevel::Info,
         });
         let factory = make_nature_remo_client_factory(cfg);
         let client = factory();

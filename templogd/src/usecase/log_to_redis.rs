@@ -92,6 +92,8 @@ mod tests {
             device_id: "".to_string(),
             redis_host: "".to_string(),
             redis_port: 0,
+            log_format: crate::LogFormat::Json,
+            log_level: crate::LogLevel::Info,
         })
     }
 
