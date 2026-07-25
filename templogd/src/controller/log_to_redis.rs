@@ -1,24 +1,20 @@
 use std::sync::Arc;
 
 use common::model::repository::datastore::DataStoreRepository;
-use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, instrument};
+use tracing::instrument;
 
 use crate::config::Config;
 use crate::usecase;
 use common::model::channel::datastore_operation::DatastoreOperation;
 
-#[instrument(parent = None, skip(client))]
+#[instrument(level = "info", name = "controller.log_to_redis", skip_all)]
 pub async fn run(
     config: Arc<Config>,
     client: impl DataStoreRepository,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
-    info!("Started");
-    defer! {info!("Ended")}
-
     usecase::log_to_redis::run(config, client, rx, cancellation_token).await;
 }
 
@@ -35,7 +31,7 @@ mod tests {
         #[async_trait::async_trait]
         impl DataStoreRepository for DataStore {
             async fn fetch_ambient_conditions<
-                T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
+                T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
             >(
                 &mut self,
                 start: T,
@@ -43,7 +39,7 @@ mod tests {
             ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, RedisError>;
 
             async fn fetch_ambient_conditions_with_sampling<
-                T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
+                T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
             >(
                 &mut self,
                 start: T,
@@ -64,6 +60,8 @@ mod tests {
             device_id: "".to_string(),
             redis_host: "".to_string(),
             redis_port: 0,
+            log_format: crate::LogFormat::Json,
+            log_level: crate::LogLevel::Info,
         })
     }
 
@@ -89,45 +87,51 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn panics_on_fetch_operation() {
+    async fn rejects_fetch_operation_without_panicking() {
         let datastore = MockDataStore::new();
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         let token = CancellationToken::new();
+        let token_for_task = token.clone();
 
-        let handle = tokio::spawn(run(config(), datastore, rx, token));
+        let handle = tokio::spawn(run(config(), datastore, rx, token_for_task));
 
-        let (resp_tx, _resp_rx) = tokio::sync::oneshot::channel();
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         tx.send(DatastoreOperation::FetchAmbientConditions {
             start: "0".into(),
             end: "1".into(),
+            span: tracing::Span::current(),
             resp: resp_tx,
         })
         .await
         .unwrap();
 
-        let join = handle.await;
-        assert!(join.is_err());
+        assert!(resp_rx.await.unwrap().is_err());
+        token.cancel();
+        handle.await.unwrap();
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn panics_on_sampling_operation() {
+    async fn rejects_sampling_operation_without_panicking() {
         let datastore = MockDataStore::new();
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         let token = CancellationToken::new();
+        let token_for_task = token.clone();
 
-        let handle = tokio::spawn(run(config(), datastore, rx, token));
+        let handle = tokio::spawn(run(config(), datastore, rx, token_for_task));
 
-        let (resp_tx, _resp_rx) = tokio::sync::oneshot::channel();
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         tx.send(DatastoreOperation::FetchAmbientConditionsWithSampling {
             start: "0".into(),
             end: "1".into(),
             samples: "2".into(),
+            span: tracing::Span::current(),
             resp: resp_tx,
         })
         .await
         .unwrap();
 
-        let join = handle.await;
-        assert!(join.is_err());
+        assert!(resp_rx.await.unwrap().is_err());
+        token.cancel();
+        handle.await.unwrap();
     }
 }

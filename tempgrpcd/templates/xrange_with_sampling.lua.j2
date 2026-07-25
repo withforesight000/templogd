@@ -13,6 +13,11 @@ redis.register_function('{{ function_name }}', function(keys, args)
         return head
     end
 
+    if sample_count == 1 then
+        -- 1件指定では最初のエントリだけ返し、ゼロ除算を避ける
+        return {head[1]}
+    end
+
     -- 範囲が大きい場合の間引きロジック
     local function id_to_ts(id)
         return tonumber(string.match(id, "^(%d+)-?"))

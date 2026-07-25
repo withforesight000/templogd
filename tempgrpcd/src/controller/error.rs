@@ -1,0 +1,63 @@
+use tonic::Status;
+
+use crate::usecase::error::UsecaseError;
+use crate::validator::error::ValidationError;
+
+impl From<UsecaseError> for Status {
+    /// Maps internal use-case failures to safe gRPC status values.
+    fn from(error: UsecaseError) -> Self {
+        match error {
+            UsecaseError::DependencyUnavailable(message) => Status::unavailable(message),
+            UsecaseError::Storage(_) => Status::unavailable("data store operation failed"),
+            UsecaseError::Internal(message) => Status::internal(message),
+        }
+    }
+}
+
+impl From<ValidationError> for Status {
+    /// Converts a validation failure into an `InvalidArgument` status.
+    fn from(error: ValidationError) -> Self {
+        Status::invalid_argument(error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_validation_error_to_invalid_argument() {
+        let status: Status = ValidationError::invalid("bad request").into();
+
+        assert_eq!(status.code(), tonic::Code::InvalidArgument);
+        assert_eq!(status.message(), "bad request");
+    }
+
+    #[test]
+    fn maps_unavailable_dependency_to_unavailable() {
+        let status: Status = UsecaseError::dependency_unavailable("channel closed").into();
+
+        assert_eq!(status.code(), tonic::Code::Unavailable);
+        assert_eq!(status.message(), "channel closed");
+    }
+
+    #[test]
+    fn maps_internal_error_to_internal_status() {
+        let status: Status = UsecaseError::Internal("unexpected failure".into()).into();
+
+        assert_eq!(status.code(), tonic::Code::Internal);
+        assert_eq!(status.message(), "unexpected failure");
+    }
+
+    #[test]
+    fn maps_storage_error_without_exposing_details() {
+        use common::model::repository::datastore::DataStoreError;
+
+        let redis_error = redis::RedisError::from((redis::ErrorKind::Io, "redis connection refused"));
+        let error = UsecaseError::from(DataStoreError::from(redis_error));
+        let status: Status = error.into();
+
+        assert_eq!(status.code(), tonic::Code::Unavailable);
+        assert_eq!(status.message(), "data store operation failed");
+    }
+}

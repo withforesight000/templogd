@@ -1,18 +1,17 @@
 use async_trait::async_trait;
-use reqwest::StatusCode;
-use scopeguard::defer;
 use serde_json::Value;
-use tracing::{debug, info, instrument};
+use std::time::Duration;
+use tracing::instrument;
 
 use crate::gateway::interface::http_client::HttpClient;
 use crate::infra::http_client::errors::ClientError;
 
 pub mod errors;
-// #[cfg(test)]
-// use mockall::{automock, predicate::*};
-// use serde_json::Value;
-// use std::fmt;
 
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_ERROR_BODY_PREVIEW_BYTES: usize = 512;
+
+/// Sends JSON HTTP requests with bounded failure diagnostics.
 #[derive(Debug)]
 pub struct ReqwestClient {
     client: reqwest::Client,
@@ -25,53 +24,110 @@ impl Default for ReqwestClient {
 }
 
 impl ReqwestClient {
-    #[instrument(parent = None)]
+    /// Creates a client that applies the request timeout at each HTTP call.
+    #[instrument(level = "info", name = "infra.http.new", skip_all)]
     pub fn new() -> ReqwestClient {
-        info!("Started");
-        defer! {info!("Ended")}
-
         ReqwestClient {
             client: reqwest::Client::new(),
         }
     }
 
-    #[instrument(parent = None)]
+    /// Converts an HTTP response into JSON while classifying status and body failures.
+    #[instrument(level = "debug", name = "infra.http.handle_response", skip_all, err)]
     async fn handle_response(response: reqwest::Response) -> Result<Value, ClientError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
-        match response.status() {
-            StatusCode::OK => {
-                let body = response.json().await;
-                match body {
-                    Ok(body) => Ok(body),
-                    Err(error) => Err(ClientError::BodyError(error)),
-                }
-            }
-            other => Err(ClientError::StatusCodeError(other, response.text().await.unwrap())),
+        let status = response.status();
+        if !status.is_success() {
+            let body = error_body_preview(response).await?;
+            return Err(ClientError::StatusCodeError(status, body));
         }
+
+        response.json().await.map_err(classify_response_error)
     }
+}
+
+/// Classifies errors raised while sending an HTTP request.
+#[instrument(level = "debug", name = "infra.http.classify_request_error", skip_all)]
+fn classify_request_error(error: reqwest::Error) -> ClientError {
+    if error.is_timeout() {
+        ClientError::Timeout(error)
+    } else {
+        ClientError::Request(error)
+    }
+}
+
+/// Classifies errors raised while decoding a successful HTTP response.
+#[instrument(level = "debug", name = "infra.http.classify_response_error", skip_all)]
+fn classify_response_error(error: reqwest::Error) -> ClientError {
+    if error.is_timeout() {
+        ClientError::Timeout(error)
+    } else {
+        ClientError::Body(error)
+    }
+}
+
+/// Reads only a bounded, UTF-8-safe preview of an error response body.
+#[instrument(level = "debug", name = "infra.http.error_body_preview", skip_all, err)]
+async fn error_body_preview(mut response: reqwest::Response) -> Result<String, ClientError> {
+    let status = response.status();
+    let mut preview = Vec::with_capacity(MAX_ERROR_BODY_PREVIEW_BYTES);
+    let mut truncated = false;
+
+    while let Some(chunk) = response.chunk().await.map_err(|source| ClientError::ResponseBody { status, source })? {
+        let remaining = MAX_ERROR_BODY_PREVIEW_BYTES.saturating_sub(preview.len());
+        if chunk.len() > remaining {
+            preview.extend_from_slice(&chunk[..remaining]);
+            truncated = true;
+            break;
+        }
+        preview.extend_from_slice(&chunk);
+    }
+
+    let mut preview = String::from_utf8_lossy(&preview).into_owned();
+    if truncated {
+        preview.push_str("...");
+    }
+    Ok(preview)
 }
 
 #[async_trait]
 impl HttpClient for ReqwestClient {
-    #[instrument(parent = None)]
-    async fn get_with_bearer_token(
-        &self,
-        url: &str,
-        bearer_token: &str,
-    ) -> Result<Value, Box<dyn std::error::Error + Send>> {
-        debug!("Started");
-        defer! {debug!("Ended")}
+    #[instrument(level = "info", name = "infra.http.get_with_bearer_token", skip_all, err)]
+    async fn get_with_bearer_token(&self, url: &str, bearer_token: &str) -> Result<Value, ClientError> {
+        let response = self
+            .client
+            .get(url)
+            .header("Authorization", format!("Bearer {}", bearer_token))
+            .timeout(HTTP_REQUEST_TIMEOUT)
+            .send()
+            .await
+            .map_err(classify_request_error)?;
+        Self::handle_response(response).await
+    }
 
-        let response = self.client.get(url).header("Authorization", format!("Bearer {}", bearer_token)).send().await;
-        match response {
-            Ok(response) => match ReqwestClient::handle_response(response).await {
-                Ok(body) => Ok(body),
-                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send>),
-            },
-            Err(e) => Err(Box::new(e)),
-        }
+    #[instrument(level = "info", name = "infra.http.post_json", skip_all, err)]
+    async fn post_json(&self, url: &str, body: &Value) -> Result<Value, ClientError> {
+        let response = self
+            .client
+            .post(url)
+            .json(body)
+            .timeout(HTTP_REQUEST_TIMEOUT)
+            .send()
+            .await
+            .map_err(classify_request_error)?;
+        Self::handle_response(response).await
+    }
+
+    #[instrument(level = "info", name = "infra.http.get_with_header", skip_all, err)]
+    async fn get_with_header(&self, url: &str, header_name: &str, header_value: &str) -> Result<Value, ClientError> {
+        let response = self
+            .client
+            .get(url)
+            .header(header_name, header_value)
+            .timeout(HTTP_REQUEST_TIMEOUT)
+            .send()
+            .await
+            .map_err(classify_request_error)?;
+        Self::handle_response(response).await
     }
 }
 
@@ -80,6 +136,7 @@ mod tests {
     use super::*;
     use crate::infra::http_client::errors::ClientError;
     use httpmock::{Method, MockServer};
+    use reqwest::StatusCode;
     use serde_json::json;
     use std::net::TcpListener;
 
@@ -126,10 +183,10 @@ mod tests {
         });
 
         let client = ReqwestClient::new();
-        let err = client.get_with_bearer_token(&format!("{}/fail", server.base_url()), "token").await.unwrap_err();
+        let client_err =
+            client.get_with_bearer_token(&format!("{}/fail", server.base_url()), "token").await.unwrap_err();
 
-        let client_err = err.downcast::<ClientError>().unwrap();
-        match *client_err {
+        match client_err {
             ClientError::StatusCodeError(status, ref body) => {
                 assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
                 assert_eq!(body, "boom");
@@ -150,13 +207,69 @@ mod tests {
         });
 
         let client = ReqwestClient::new();
-        let err =
+        let client_err =
             client.get_with_bearer_token(&format!("{}/invalid-json", server.base_url()), "token").await.unwrap_err();
 
-        let client_err = err.downcast::<ClientError>().unwrap();
-        match *client_err {
-            ClientError::BodyError(_) => {}
+        match client_err {
+            ClientError::Body(_) => {}
             _ => panic!("expected body error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn accepts_non_200_success_and_supports_post_and_custom_header_requests() {
+        if !can_bind_localhost() {
+            return;
+        }
+        let server = MockServer::start();
+        let post = server.mock(|when, then| {
+            when.method(Method::POST).path("/login").json_body(json!({"role_id": "role"}));
+            then.status(201).json_body(json!({"ok": true}));
+        });
+        let get = server.mock(|when, then| {
+            when.method(Method::GET).path("/secret").header("X-Token", "token");
+            then.status(200).json_body(json!({"secret": true}));
+        });
+
+        let client = ReqwestClient::new();
+        let post_response =
+            client.post_json(&format!("{}/login", server.base_url()), &json!({"role_id": "role"})).await.unwrap();
+        let get_response =
+            client.get_with_header(&format!("{}/secret", server.base_url()), "X-Token", "token").await.unwrap();
+
+        assert_eq!(post_response["ok"], true);
+        assert_eq!(get_response["secret"], true);
+        post.assert();
+        get.assert();
+    }
+
+    #[tokio::test]
+    async fn bounds_non_success_body_preview_and_hides_it_from_display() {
+        if !can_bind_localhost() {
+            return;
+        }
+        let server = MockServer::start();
+        let body = "sensitive-error-details".repeat(100);
+        server.mock(|when, then| {
+            when.method(Method::GET).path("/fail");
+            then.status(502).body(body.clone());
+        });
+
+        let client = ReqwestClient::new();
+        let error = client.get_with_bearer_token(&format!("{}/fail", server.base_url()), "token").await.unwrap_err();
+
+        match error {
+            ClientError::StatusCodeError(status, preview) => {
+                assert_eq!(status, StatusCode::BAD_GATEWAY);
+                assert_eq!(preview.len(), MAX_ERROR_BODY_PREVIEW_BYTES + 3);
+                assert!(preview.ends_with("..."));
+                assert!(format!("{status}").contains("502"));
+                assert_eq!(
+                    format!("{}", ClientError::StatusCodeError(status, preview)),
+                    "HTTP response returned status 502 Bad Gateway"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 }

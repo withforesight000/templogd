@@ -1,42 +1,46 @@
 use crate::model::ambient_condition::AmbientCondition;
+use crate::model::repository::datastore::DataStoreError;
 
+/// Work items that the Redis fetch loop receives over its MPSC channel.
 #[derive(Debug)]
 pub enum DatastoreOperation {
+    /// Ask the datastore worker to fetch ambient conditions from Redis.
     FetchAmbientConditions {
         start: String,
         end: String,
-        resp: tokio::sync::oneshot::Sender<
-            Result<std::collections::HashMap<String, AmbientCondition>, redis::RedisError>,
-        >,
+        /// Span of the gRPC request that originated this datastore operation.
+        span: tracing::Span,
+        resp: tokio::sync::oneshot::Sender<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>,
     },
+    /// Ask the datastore worker to fetch ambient conditions using Redis sampling.
     FetchAmbientConditionsWithSampling {
         start: String,
         end: String,
         samples: String,
-        resp: tokio::sync::oneshot::Sender<
-            Result<std::collections::HashMap<String, AmbientCondition>, redis::RedisError>,
-        >,
+        /// Span of the gRPC request that originated this datastore operation.
+        span: tracing::Span,
+        resp: tokio::sync::oneshot::Sender<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>,
     },
-    SaveAmbientCondition {
-        ambient_condition: AmbientCondition,
-    },
+    /// Persist one ambient condition reading to Redis.
+    SaveAmbientCondition { ambient_condition: AmbientCondition },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use redis::RedisError;
     use tokio::sync::oneshot;
 
     #[tokio::test]
     async fn fetch_variant_carries_payloads() {
-        let (tx, rx) = oneshot::channel::<Result<std::collections::HashMap<String, AmbientCondition>, RedisError>>();
+        let (tx, rx) =
+            oneshot::channel::<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>();
         let op = DatastoreOperation::FetchAmbientConditions {
             start: "s".to_string(),
             end: "e".to_string(),
+            span: tracing::Span::current(),
             resp: tx,
         };
-        if let DatastoreOperation::FetchAmbientConditions { start, end, resp } = op {
+        if let DatastoreOperation::FetchAmbientConditions { start, end, resp, .. } = op {
             assert_eq!(start, "s");
             assert_eq!(end, "e");
             resp.send(Ok(std::collections::HashMap::new())).unwrap();

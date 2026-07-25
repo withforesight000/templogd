@@ -12,9 +12,9 @@ cfg-if = "1.0"
 nix = { version = "0.30", features = ["fs"] }
 redis = { workspace = true }
 reqwest = { workspace = true }
-scopeguard = { workspace = true }
 serde_json = { workspace = true }
 syslog = "7.0"
+thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 

@@ -10,16 +10,16 @@ resolver = "2"
 async-trait = "0.1"
 clap = { version = "4.5", features = ["derive", "env"] }
 common = { path = "common" }
-json-subscriber = "0.2"
 mockall = "0.14"
 redis = { version = "1.2", features = ["connection-manager", "tokio-comp", "streams"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
-scopeguard = "1.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+thiserror = "2.0"
 tokio = { version = "1.47", features = ["full"] }
 tokio-util = "0.7"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json"] }
 
 [profile.release]
 opt-level = "z"

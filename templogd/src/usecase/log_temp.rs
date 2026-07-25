@@ -1,56 +1,63 @@
 use std::sync::Arc;
 
-use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, instrument};
 
 use crate::config::Config;
 use common::model::{channel::datastore_operation::DatastoreOperation, repository::nature_remo::NatureRemo};
 
-#[instrument(parent = None, skip(client))]
+/// Polls Nature Remo and queues successful readings for persistence in Redis.
+#[instrument(level = "info", name = "usecase.log_temp", skip_all)]
 pub async fn run(
-    config: Arc<Config>,
+    _config: Arc<Config>,
     client: impl NatureRemo,
     tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
-    info!("Started");
-    defer! {info!("Ended")}
-
     loop {
         let nature_remo_result = client.fetch_ambient_condition().await;
         let condition = match nature_remo_result {
             Ok(condition) => Some(condition),
             Err(e) => {
-                error!("Failed to fetch ambient condition from NatureRemo: {:?}", e);
+                error!(error = %e, operation = "nature_remo.fetch_ambient_condition", "Nature Remo polling failed");
                 None
             }
         };
 
         if let Some(condition) = condition {
             info!(
-                "Got ambient condition from NatureRemo: Temperature: {}, Humidity: {}, Illumination: {}",
-                condition.get_temperature(),
-                condition.get_humidity(),
-                condition.get_illumination()
+                operation = "nature_remo.fetch_ambient_condition",
+                temperature = condition.get_temperature(),
+                humidity = condition.get_humidity(),
+                illumination = condition.get_illumination(),
+                "Ambient condition received"
             );
 
-            info!("Sending ambient condition to log_temp task: {:?}", condition);
+            info!(
+                operation = "redis.save_ambient_condition",
+                "Sending ambient condition to Redis task"
+            );
             let result = tx
                 .send(DatastoreOperation::SaveAmbientCondition {
                     ambient_condition: condition,
                 })
                 .await;
             match result {
-                Ok(_) => info!("Sent ambient condition to log_temp task"),
-                Err(e) => error!("Failed to send ambient condition to log_temp task: {:?}", e),
+                Ok(_) => info!(
+                    operation = "redis.save_ambient_condition",
+                    "Ambient condition queued for Redis"
+                ),
+                Err(e) => {
+                    error!(error = %e, operation = "redis.save_ambient_condition", "Failed to queue ambient condition");
+                    break;
+                }
             };
         }
 
         tokio::select! {
             _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {}
             _ = cancellation_token.cancelled() => {
-                info!("confirmed cancellation token was cancelled");
+                info!(reason = "cancellation_requested", "Nature Remo polling stopped");
                 break;
             }
         }
@@ -82,6 +89,8 @@ mod tests {
             device_id: "".to_string(),
             redis_host: "".to_string(),
             redis_port: 0,
+            log_format: crate::LogFormat::Json,
+            log_level: crate::LogLevel::Info,
         })
     }
 

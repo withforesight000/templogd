@@ -1,19 +1,15 @@
 use crate::usecase;
 use common::model::{channel::datastore_operation::DatastoreOperation, repository::datastore::DataStoreRepository};
 
-use scopeguard::defer;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, instrument};
+use tracing::instrument;
 
-#[instrument(parent = None, skip(client))]
+#[instrument(level = "info", name = "controller.fetch_from_redis", skip_all)]
 pub async fn run(
     client: impl DataStoreRepository,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
-    info!("Started");
-    defer! {info!("Ended")}
-
     usecase::fetch_from_redis::run(client, rx, cancellation_token).await;
 }
 
@@ -31,7 +27,7 @@ mod tests {
         #[async_trait::async_trait]
         impl DataStoreRepository for DataStore {
             async fn fetch_ambient_conditions<
-                T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
+                T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
             >(
                 &mut self,
                 start: T,
@@ -39,7 +35,7 @@ mod tests {
             ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, RedisError>;
 
             async fn fetch_ambient_conditions_with_sampling<
-                T: ToRedisArgs + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
+                T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
             >(
                 &mut self,
                 start: T,
@@ -72,6 +68,7 @@ mod tests {
             tx.send(DatastoreOperation::FetchAmbientConditions {
                 start: "0".into(),
                 end: "1".into(),
+                span: tracing::Span::current(),
                 resp: resp_tx,
             })
             .await

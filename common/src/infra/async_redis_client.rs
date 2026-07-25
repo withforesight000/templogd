@@ -3,8 +3,7 @@ use std::marker::{Send, Sync};
 
 use async_trait::async_trait;
 use redis::{AsyncCommands, RedisError, ToRedisArgs, Value, aio::ConnectionManager, cmd};
-use scopeguard::defer;
-use tracing::{debug, info, instrument};
+use tracing::{debug, instrument};
 
 use crate::gateway::interface::redis::Redis;
 
@@ -67,25 +66,29 @@ impl RedisConnection for RealRedisConnection {
     }
 }
 
+/// Implements the shared Redis port using an asynchronous Redis connection.
 pub struct AsyncRedisCrateClient<C: RedisConnection = RealRedisConnection> {
     connection: C,
 }
 
 impl AsyncRedisCrateClient<RealRedisConnection> {
-    #[instrument(parent = None)]
-    pub async fn new(host: &str) -> Self {
-        info!("Started");
-        defer! {info!("Ended")}
-
-        let client = redis::Client::open(host).unwrap();
-        let connection = ConnectionManager::new(client).await.unwrap();
-        Self {
+    /// Opens a Redis connection manager for the supplied Redis URL.
+    ///
+    /// Returns the Redis configuration or connection error so the daemon can
+    /// report a failed startup to its process supervisor.
+    #[instrument(level = "info", name = "infra.redis.new", skip_all)]
+    pub async fn new(host: &str) -> Result<Self, RedisError> {
+        let client = redis::Client::open(host)?;
+        let connection = ConnectionManager::new(client).await?;
+        Ok(Self {
             connection: RealRedisConnection { connection },
-        }
+        })
     }
 }
 
 impl<C: RedisConnection> AsyncRedisCrateClient<C> {
+    /// Builds a Redis client around a connection, primarily for in-process tests.
+    #[instrument(level = "info", name = "infra.redis.new_with_connection", skip_all)]
     pub fn new_with_connection(connection: C) -> Self {
         Self { connection }
     }
@@ -93,15 +96,13 @@ impl<C: RedisConnection> AsyncRedisCrateClient<C> {
 
 #[async_trait]
 impl<C: RedisConnection> Redis for AsyncRedisCrateClient<C> {
+    #[instrument(level = "info", name = "infra.redis.fcall", skip_all, err)]
     async fn fcall<K: ToRedisArgs + Send + Sync + 'static, A: ToRedisArgs + Send + Sync + 'static>(
         &mut self,
         function_name: &str,
         keys: &[K],
         args: &[A],
     ) -> Result<Value, RedisError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
         let mut c = cmd("FCALL");
         c.arg(function_name).arg(keys.len()).arg(keys).arg(args);
 
@@ -111,10 +112,8 @@ impl<C: RedisConnection> Redis for AsyncRedisCrateClient<C> {
         })
     }
 
+    #[instrument(level = "info", name = "infra.redis.function_load", skip_all, err)]
     async fn function_load(&mut self, replace: bool, code: &str) -> Result<String, RedisError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
         let mut c = cmd("FUNCTION");
         c.arg("LOAD").arg(if replace { "REPLACE" } else { "" }).arg(code);
 
@@ -124,19 +123,17 @@ impl<C: RedisConnection> Redis for AsyncRedisCrateClient<C> {
         })
     }
 
-    #[instrument(parent = None, skip(self, items))]
+    #[instrument(level = "info", name = "infra.redis.xadd", skip_all, err)]
     async fn xadd<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
         &mut self,
         key: &str,
         id: &str,
         items: &[(T, U)],
     ) -> Result<Value, RedisError> {
-        debug!("Started");
-        defer! {debug!("Ended")}
-
         self.connection.xadd(key, id, items).await
     }
 
+    #[instrument(level = "info", name = "infra.redis.xrange", skip_all, err)]
     async fn xrange<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
         &mut self,
         key: &str,
@@ -217,11 +214,9 @@ mod tests {
         }
     }
 
-    // Creating a client with an invalid URL should panic because of unwraps.
     #[tokio::test]
-    #[should_panic]
-    async fn new_panics_on_invalid_url() {
-        let _ = AsyncRedisCrateClient::new("not-a-redis-url").await;
+    async fn new_returns_an_error_for_an_invalid_url() {
+        assert!(AsyncRedisCrateClient::new("not-a-redis-url").await.is_err());
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -1,227 +1,140 @@
 use std::sync::Arc;
 
-use askama::Template;
-use scopeguard::defer;
-use tempgrpcd_protos::tempgrpcd::v1::tempgrpcd_service_server::TempgrpcdServiceServer;
-use tokio::{
-    signal::{
-        self,
-        unix::{SignalKind, signal},
-    },
-    task::JoinHandle,
-};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tonic::{
-    Request, Status,
-    metadata::MetadataValue,
-    service::Interceptor,
-    transport::{Server, server::Router},
+use tonic::transport::server::Router;
+use tracing::{error, info, instrument};
+
+use super::{
+    auth::ServerError,
+    grpc::boxed_start_grpc_server_task,
+    tasks::{start_datastore_task, start_signal_handler_task},
 };
-use tonic_reflection::server::Builder;
-use tracing::{debug, info, instrument};
+use crate::config::Config;
+use common::model::channel::datastore_operation::DatastoreOperation;
 
-use crate::{
-    config::Config,
-    controller::{self, get_ambient_conditions::GetAmbientConditionsImpl},
-    usecase::{
-        get_ambient_conditions::GetAmbientConditionsUC,
-        get_ambient_conditions_with_sampling::GetAmbientConditionsWithSamplingUC,
-    },
-};
-use common::{gateway::datastore::DataStore, model::channel::datastore_operation::DatastoreOperation};
-
-pub const REDIS_XRANGE_WITH_SAMPLING: &str = "xrange_with_sampling";
-
-#[derive(Clone)]
-struct AuthInterceptor {
-    token: String,
-}
-
-impl Interceptor for AuthInterceptor {
-    fn call(&mut self, req: Request<()>) -> Result<Request<()>, Status> {
-        let correct_bearer_token = format!("Bearer {}", self.token);
-        let token: MetadataValue<_> = correct_bearer_token.parse().unwrap();
-
-        match req.metadata().get("authorization") {
-            Some(t) if token == t => Ok(req),
-            _ => Err(Status::unauthenticated("No valid auth token")),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn interceptor_allows_valid_token() {
-        let mut interceptor = AuthInterceptor { token: "secret".into() };
-        let mut req = Request::new(());
-        req.metadata_mut().insert("authorization", MetadataValue::try_from("Bearer secret").unwrap());
-        assert!(interceptor.call(req).is_ok());
-    }
-
-    #[test]
-    fn interceptor_rejects_invalid_token() {
-        let mut interceptor = AuthInterceptor { token: "secret".into() };
-        let req = Request::new(());
-        let err = interceptor.call(req).unwrap_err();
-        assert_eq!(err.code(), tonic::Code::Unauthenticated);
-    }
-}
-
-#[instrument(parent = None)]
-pub async fn run(config: Arc<Config>) {
+/// Starts the tempgrpcd server, Redis worker, and shutdown handling.
+///
+/// Returns an error when the configured bearer token is not valid gRPC metadata.
+#[instrument(level = "info", name = "infra.run", parent = None)]
+pub(crate) async fn run(config: Arc<Config>) -> Result<(), ServerError> {
     run_with(
         config,
         start_datastore_task,
         start_signal_handler_task,
         boxed_start_grpc_server_task,
     )
-    .await;
+    .await
 }
 
-async fn run_with<SD, SS, SG, SGFut>(config: Arc<Config>, start_datastore: SD, start_signal_handler: SS, start_grpc: SG)
+#[instrument(level = "debug", name = "infra.run_with", skip_all)]
+async fn run_with<SD, SS, SG, SGFut>(
+    config: Arc<Config>,
+    start_datastore: SD,
+    start_signal_handler: SS,
+    start_grpc: SG,
+) -> Result<(), ServerError>
 where
-    SD: FnOnce(Arc<Config>, tokio::sync::mpsc::Receiver<DatastoreOperation>, CancellationToken) -> JoinHandle<()>,
+    SD: FnOnce(
+        Arc<Config>,
+        tokio::sync::mpsc::Receiver<DatastoreOperation>,
+        CancellationToken,
+    ) -> JoinHandle<Result<(), ServerError>>,
     SS: FnOnce(CancellationToken) -> SGFut,
     SGFut: std::future::Future<Output = ()> + Send,
     SG: FnOnce(
         tokio::sync::mpsc::Sender<DatastoreOperation>,
         Arc<Config>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Router> + Send>>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Router, ServerError>> + Send>>,
 {
-    info!("Started");
-    defer! {info!("Ended")}
-
+    let addr = format!("{}:{}", config.get_server_bind_address(), config.get_server_port())
+        .parse()
+        .map_err(ServerError::InvalidBindAddress)?;
     let cancellation_token = CancellationToken::new();
     let (tx, rx) = tokio::sync::mpsc::channel(32);
 
-    let redis_task = start_datastore(config.clone(), rx, cancellation_token.clone());
+    let grpc_server = start_grpc(tx, config.clone()).await?;
+    let mut redis_task = start_datastore(config.clone(), rx, cancellation_token.clone());
     start_signal_handler(cancellation_token.clone()).await;
 
-    let grpc_server = start_grpc(tx, config.clone()).await;
-    let addr = format!("{}:{}", config.get_server_bind_address(), config.get_server_port())
-        .parse()
-        .expect("Unable to parse socket address");
-
     let server_future = grpc_server.serve_with_shutdown(addr, cancellation_token.cancelled());
+    tokio::pin!(server_future);
 
-    info!("tempgrpcd listening on {}", addr);
-    tokio::select! {
-        _ = server_future => {
-            info!("GRPC server was gracefully shut down");
-        },
-        _ = cancellation_token.cancelled() => {
-            info!("cancellation token was cancelled");
-        }
+    info!("Starting tempgrpcd listener on {}", addr);
+    enum FirstCompletion {
+        Shutdown,
+        GrpcServer(Result<(), tonic::transport::Error>),
+        Redis(Result<Result<(), ServerError>, tokio::task::JoinError>),
     }
 
-    _ = tokio::join!(redis_task);
-}
-
-fn boxed_start_grpc_server_task(
-    tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
-    config: Arc<Config>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Router> + Send>> {
-    Box::pin(start_grpc_server_task(tx, config))
-}
-
-#[instrument(parent = None)]
-fn start_datastore_task(
-    config: Arc<Config>,
-    rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
-    cancellation_token: CancellationToken,
-) -> JoinHandle<()> {
-    debug!("Started");
-    defer! {debug!("Ended")}
-
-    tokio::spawn(async move {
-        #[derive(Template)]
-        #[template(path = "xrange_with_sampling.lua.j2")]
-        struct XRANGEWithSamplingTemplate<'a> {
-            function_name: &'a str,
+    let first_completion = tokio::select! {
+        biased;
+        _ = cancellation_token.cancelled() => {
+            info!(reason = "shutdown_requested", "Shutdown requested");
+            FirstCompletion::Shutdown
+        },
+        result = &mut redis_task => {
+            FirstCompletion::Redis(result)
+        },
+        result = &mut server_future => {
+            FirstCompletion::GrpcServer(result)
         }
-        let xrange_with_sampling_code = XRANGEWithSamplingTemplate {
-            function_name: REDIS_XRANGE_WITH_SAMPLING,
+    };
+
+    cancellation_token.cancel();
+    match first_completion {
+        FirstCompletion::Shutdown => {
+            let (server_result, redis_result) = tokio::join!(server_future, redis_task);
+            server_result.map_err(ServerError::ServeGrpc)?;
+            handle_shutdown_task_result("redis", redis_result)
         }
-        .render()
-        .expect("Failed to render template");
-
-        let mut datastore_client = DataStore::new(
-            common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!(
-                "redis://{}:{}",
-                config.get_redis_host(),
-                config.get_redis_port()
-            ))
-            .await,
-        )
-        .await;
-        datastore_client
-            .load_function_xrange_with_sampling(&xrange_with_sampling_code)
-            .await
-            .expect("Failed to load Lua script for xrange with sampling");
-        controller::fetch_from_redis::run(datastore_client, rx, cancellation_token).await
-    })
-}
-
-#[instrument(parent = None)]
-async fn start_signal_handler_task(cancellation_token: CancellationToken) {
-    debug!("Started");
-    defer! {debug!("Ended")}
-
-    let mut sigterm = signal(SignalKind::terminate()).expect("Failed to create signal");
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = signal::ctrl_c() => {
-                info!("SIGINT received");
-
-                cancellation_token.cancel();
-                // break;
-            },
-            _ = sigterm.recv() => {
-                info!("SIGTERM received");
-
-                cancellation_token.cancel();
-                // break;
+        FirstCompletion::GrpcServer(server_result) => {
+            log_shutdown_task_result("redis", redis_task.await);
+            server_result.map_err(ServerError::ServeGrpc)?;
+            Err(ServerError::BackgroundTaskStopped { task: "grpc" })
+        }
+        FirstCompletion::Redis(redis_result) => {
+            if let Err(error) = server_future.await {
+                error!(error = %error, "gRPC server failed during Redis worker shutdown");
             }
+            handle_active_task_result("redis", redis_result)
         }
-    });
+    }
 }
 
-#[instrument(parent = None)]
-async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>, config: Arc<Config>) -> Router {
-    debug!("Started");
-    defer! {debug!("Ended")}
+fn handle_active_task_result(
+    task: &'static str,
+    result: Result<Result<(), ServerError>, tokio::task::JoinError>,
+) -> Result<(), ServerError> {
+    match result {
+        Ok(Ok(())) => Err(ServerError::BackgroundTaskStopped { task }),
+        Ok(Err(error)) => Err(error),
+        Err(source) => Err(ServerError::BackgroundTask { task, source }),
+    }
+}
 
-    let get_ambient_conditions_uc = GetAmbientConditionsUC::new(tx.clone());
-    let get_ambient_conditions_with_sampling_uc = GetAmbientConditionsWithSamplingUC::new(tx);
-    let ambient_condition_repository =
-        GetAmbientConditionsImpl::new(get_ambient_conditions_uc, get_ambient_conditions_with_sampling_uc);
-    let (reporter, health_server) = tonic_health::server::health_reporter();
-    reporter.set_serving::<TempgrpcdServiceServer<
-        GetAmbientConditionsImpl<GetAmbientConditionsUC, GetAmbientConditionsWithSamplingUC>,
-    >>().await;
+fn handle_shutdown_task_result(
+    task: &'static str,
+    result: Result<Result<(), ServerError>, tokio::task::JoinError>,
+) -> Result<(), ServerError> {
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error),
+        Err(source) => Err(ServerError::BackgroundTask { task, source }),
+    }
+}
 
-    Server::builder()
-        .add_service(TempgrpcdServiceServer::with_interceptor(
-            ambient_condition_repository,
-            AuthInterceptor {
-                token: config.get_bearer_token().to_string(),
-            },
-        ))
-        .add_service(
-            Builder::configure()
-                .register_encoded_file_descriptor_set(tempgrpcd_protos::tempgrpcd::v1::FILE_DESCRIPTOR_SET)
-                .register_encoded_file_descriptor_set(tonic_health::pb::FILE_DESCRIPTOR_SET)
-                .build_v1()
-                .unwrap(),
-        )
-        .add_service(health_server)
+fn log_shutdown_task_result(task: &'static str, result: Result<Result<(), ServerError>, tokio::task::JoinError>) {
+    match result {
+        Ok(Ok(())) => info!(task, "Background task completed during shutdown"),
+        Ok(Err(error)) => error!(task, error = %error, "Background task failed during shutdown"),
+        Err(error) => error!(task, error = %error, "Background task panicked during shutdown"),
+    }
 }
 
 #[cfg(test)]
-mod run_tests {
+mod tests {
+    use super::super::grpc::start_grpc_server_task;
     use super::*;
 
     fn args() -> crate::TempgrpcdArgs {
@@ -231,6 +144,8 @@ mod run_tests {
             bearer_token: "token".into(),
             redis_host: "localhost".into(),
             redis_port: 6379,
+            log_format: crate::LogFormat::Json,
+            log_level: crate::LogLevel::Info,
         }
     }
 
@@ -238,7 +153,19 @@ mod run_tests {
     async fn builds_grpc_router() {
         let config = crate::config::new(args());
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        let _router = start_grpc_server_task(tx, config).await;
+        let _router = start_grpc_server_task(tx, config).await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_invalid_bearer_token_before_building_router() {
+        let mut invalid_args = args();
+        invalid_args.bearer_token = "token\n".into();
+        let config = crate::config::new(invalid_args);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+
+        let result = start_grpc_server_task(tx, config).await;
+
+        assert!(matches!(result, Err(ServerError::InvalidBearerToken(_))));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -249,21 +176,130 @@ mod run_tests {
             |_cfg: Arc<Config>, _rx: tokio::sync::mpsc::Receiver<DatastoreOperation>, token: CancellationToken| {
                 tokio::spawn(async move {
                     token.cancelled().await;
+                    Ok(())
                 })
             };
 
         let start_signal_handler = |token: CancellationToken| async move {
-            // Cancel shortly after the server starts.
-            tokio::task::yield_now().await;
             token.cancel();
         };
 
         let start_grpc = |tx: tokio::sync::mpsc::Sender<DatastoreOperation>, cfg: Arc<Config>| {
             Box::pin(start_grpc_server_task(tx, cfg))
-                as std::pin::Pin<Box<dyn std::future::Future<Output = Router> + Send>>
+                as std::pin::Pin<Box<dyn std::future::Future<Output = Result<Router, ServerError>> + Send>>
         };
 
         let fut = run_with(config, start_datastore, start_signal_handler, start_grpc);
-        tokio::time::timeout(std::time::Duration::from_secs(2), fut).await.expect("server did not shut down in time");
+        tokio::time::timeout(std::time::Duration::from_secs(2), fut)
+            .await
+            .expect("server did not shut down in time")
+            .expect("server failed to start");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_with_returns_an_error_when_redis_worker_exits() {
+        let config = crate::config::new(args());
+
+        let start_datastore =
+            |_cfg: Arc<Config>, _rx: tokio::sync::mpsc::Receiver<DatastoreOperation>, _token: CancellationToken| {
+                tokio::spawn(async { Ok(()) })
+            };
+
+        let start_signal_handler = |_token: CancellationToken| async {};
+        let start_grpc = |tx: tokio::sync::mpsc::Sender<DatastoreOperation>, cfg: Arc<Config>| {
+            Box::pin(start_grpc_server_task(tx, cfg))
+                as std::pin::Pin<Box<dyn std::future::Future<Output = Result<Router, ServerError>> + Send>>
+        };
+
+        let fut = run_with(config, start_datastore, start_signal_handler, start_grpc);
+        let error = tokio::time::timeout(std::time::Duration::from_secs(2), fut)
+            .await
+            .expect("server did not stop after the Redis worker exited")
+            .unwrap_err();
+
+        assert!(matches!(error, ServerError::BackgroundTaskStopped { task: "redis" }));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_with_returns_redis_worker_panics() {
+        let config = crate::config::new(args());
+
+        let start_datastore =
+            |_cfg: Arc<Config>, _rx: tokio::sync::mpsc::Receiver<DatastoreOperation>, _token: CancellationToken| {
+                tokio::spawn(async {
+                    panic!("redis worker panic");
+                    #[allow(unreachable_code)]
+                    Ok(())
+                })
+            };
+        let start_signal_handler = |_token: CancellationToken| async {};
+        let start_grpc = |tx: tokio::sync::mpsc::Sender<DatastoreOperation>, cfg: Arc<Config>| {
+            Box::pin(start_grpc_server_task(tx, cfg))
+                as std::pin::Pin<Box<dyn std::future::Future<Output = Result<Router, ServerError>> + Send>>
+        };
+
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            run_with(config, start_datastore, start_signal_handler, start_grpc),
+        )
+        .await
+        .expect("server did not stop after the Redis worker panicked")
+        .unwrap_err();
+
+        assert!(matches!(error, ServerError::BackgroundTask { task: "redis", .. }));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_with_returns_grpc_bind_failures() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut server_args = args();
+        server_args.server_port = port.to_string();
+        let config = crate::config::new(server_args);
+
+        let start_datastore =
+            |_cfg: Arc<Config>, _rx: tokio::sync::mpsc::Receiver<DatastoreOperation>, token: CancellationToken| {
+                tokio::spawn(async move {
+                    token.cancelled().await;
+                    Ok(())
+                })
+            };
+        let start_signal_handler = |_token: CancellationToken| async {};
+        let start_grpc = |tx: tokio::sync::mpsc::Sender<DatastoreOperation>, cfg: Arc<Config>| {
+            Box::pin(start_grpc_server_task(tx, cfg))
+                as std::pin::Pin<Box<dyn std::future::Future<Output = Result<Router, ServerError>> + Send>>
+        };
+
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            run_with(config, start_datastore, start_signal_handler, start_grpc),
+        )
+        .await
+        .expect("server did not return its bind failure")
+        .unwrap_err();
+
+        assert!(matches!(error, ServerError::ServeGrpc(_)));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_with_rejects_invalid_bind_addresses_before_starting_tasks() {
+        let mut server_args = args();
+        server_args.server_port = "invalid".into();
+        let config = crate::config::new(server_args);
+
+        let start_datastore =
+            |_cfg: Arc<Config>, _rx: tokio::sync::mpsc::Receiver<DatastoreOperation>, _token: CancellationToken| {
+                panic!("datastore task must not start");
+            };
+        let start_signal_handler = |_token: CancellationToken| async {
+            panic!("signal handler must not start");
+        };
+        let start_grpc = |_tx: tokio::sync::mpsc::Sender<DatastoreOperation>, _cfg: Arc<Config>| {
+            panic!("gRPC router must not start");
+        };
+
+        let error = run_with(config, start_datastore, start_signal_handler, start_grpc).await.unwrap_err();
+
+        assert!(matches!(error, ServerError::InvalidBindAddress(_)));
     }
 }
