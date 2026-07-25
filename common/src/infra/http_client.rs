@@ -37,8 +37,8 @@ impl ReqwestClient {
     async fn handle_response(response: reqwest::Response) -> Result<Value, ClientError> {
         let status = response.status();
         if !status.is_success() {
-            let body = response.text().await.map_err(|source| ClientError::ResponseBody { status, source })?;
-            return Err(ClientError::StatusCodeError(status, body_preview(&body)));
+            let body = error_body_preview(response).await?;
+            return Err(ClientError::StatusCodeError(status, body));
         }
 
         response.json().await.map_err(classify_response_error)
@@ -65,16 +65,28 @@ fn classify_response_error(error: reqwest::Error) -> ClientError {
     }
 }
 
-/// Keeps only a bounded, UTF-8-safe preview of an error response body.
-#[instrument(level = "debug", name = "infra.http.body_preview", skip_all)]
-fn body_preview(body: &str) -> String {
-    let bytes = body.as_bytes();
-    let preview = &bytes[..bytes.len().min(MAX_ERROR_BODY_PREVIEW_BYTES)];
-    let mut preview = String::from_utf8_lossy(preview).into_owned();
-    if bytes.len() > MAX_ERROR_BODY_PREVIEW_BYTES {
+/// Reads only a bounded, UTF-8-safe preview of an error response body.
+#[instrument(level = "debug", name = "infra.http.error_body_preview", skip_all, err)]
+async fn error_body_preview(mut response: reqwest::Response) -> Result<String, ClientError> {
+    let status = response.status();
+    let mut preview = Vec::with_capacity(MAX_ERROR_BODY_PREVIEW_BYTES);
+    let mut truncated = false;
+
+    while let Some(chunk) = response.chunk().await.map_err(|source| ClientError::ResponseBody { status, source })? {
+        let remaining = MAX_ERROR_BODY_PREVIEW_BYTES.saturating_sub(preview.len());
+        if chunk.len() > remaining {
+            preview.extend_from_slice(&chunk[..remaining]);
+            truncated = true;
+            break;
+        }
+        preview.extend_from_slice(&chunk);
+    }
+
+    let mut preview = String::from_utf8_lossy(&preview).into_owned();
+    if truncated {
         preview.push_str("...");
     }
-    preview
+    Ok(preview)
 }
 
 #[async_trait]
@@ -249,7 +261,8 @@ mod tests {
         match error {
             ClientError::StatusCodeError(status, preview) => {
                 assert_eq!(status, StatusCode::BAD_GATEWAY);
-                assert!(preview.len() <= 515);
+                assert_eq!(preview.len(), MAX_ERROR_BODY_PREVIEW_BYTES + 3);
+                assert!(preview.ends_with("..."));
                 assert!(format!("{status}").contains("502"));
                 assert_eq!(
                     format!("{}", ClientError::StatusCodeError(status, preview)),
