@@ -33,7 +33,7 @@ impl<'a> ValidatedGetAmbientConditionsRequest<'a> {
     ///
     /// This checks that both timestamps exist, `start_time` is not after `end_time`
     /// including nanoseconds, and `samples`, when provided, is greater than zero.
-    #[instrument(level = "info", name = "grpc.validate_ambient_conditions_request", skip_all, err)]
+    #[instrument(level = "info", name = "validator.validate_business_rules", skip_all, err)]
     pub fn validate_business_rules(&self) -> Result<(), ValidationError> {
         let start = self.start_time.as_ref().ok_or_else(|| ValidationError::invalid("start_time is required"))?;
         let end = self.end_time.as_ref().ok_or_else(|| ValidationError::invalid("end_time is required"))?;

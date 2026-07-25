@@ -77,6 +77,7 @@ Never log or expose bearer/API tokens. Preserve the masked `Debug` behavior of c
 - Preserve Redis compatibility: the stream key is `ambient_condition`; fields are `temperature`, `humidity`, and `illumination`; the sampling function is `xrange_with_sampling` and is loaded with replacement during `tempgrpcd` startup.
 - Update the Lua template and its Rust call site/tests together if the sampling function signature changes. Redis Functions require Redis 7 or later.
 - Use structured `tracing` instrumentation consistent with surrounding code. Avoid logging full request metadata, credentials, or other secrets.
+- Use stable span names in `<layer>.<method>` form, where `<layer>` is the clean-architecture layer or its source directory and `<method>` is the Rust method or function name. When a layer contains multiple external systems or implementations, use `<layer>.<component>.<method>` (for example, `gateway.redis.fetch_ambient_conditions` and `gateway.nature_remo.fetch_ambient_condition`). For manually created task or request spans, use the same structure with the operation name in the final segment. Use the actual method name `new` rather than suffixes such as `_new`, and apply the same convention to `info_span!` names.
 
 ## Change discipline
 

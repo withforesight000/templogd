@@ -14,7 +14,7 @@ use common::infra::{async_redis_client::AsyncRedisCrateClient, http_client::Reqw
 use common::model::channel::datastore_operation::DatastoreOperation;
 
 /// Starts templogd's polling and Redis workers and coordinates shutdown.
-#[instrument(level = "info", parent = None, skip_all)]
+#[instrument(level = "info", name = "infra.run", parent = None, skip_all)]
 pub async fn run(config: Arc<Config>) {
     run_with(
         config,
@@ -25,7 +25,7 @@ pub async fn run(config: Arc<Config>) {
     .await;
 }
 
-#[instrument(level = "debug", skip_all)]
+#[instrument(level = "debug", name = "infra.run_with", skip_all)]
 async fn run_with<S, SFut, NProvider, NFactory, NClient, DProvider, DFactory, DFut, DClient>(
     config: Arc<Config>,
     shutdown: S,
@@ -71,7 +71,7 @@ async fn run_with<S, SFut, NProvider, NFactory, NClient, DProvider, DFactory, DF
     }
 }
 
-#[instrument(level = "debug", skip_all)]
+#[instrument(level = "debug", name = "infra.make_nature_remo_client_factory", skip_all)]
 fn make_nature_remo_client_factory(config: Arc<Config>) -> impl Fn() -> NatureRemoClient<ReqwestClient> {
     move || {
         NatureRemoClient::new(
@@ -83,7 +83,7 @@ fn make_nature_remo_client_factory(config: Arc<Config>) -> impl Fn() -> NatureRe
     }
 }
 
-#[instrument(level = "debug", skip_all)]
+#[instrument(level = "debug", name = "infra.make_redis_client_factory", skip_all)]
 fn make_redis_client_factory(
     config: Arc<Config>,
 ) -> impl Fn() -> Pin<Box<dyn Future<Output = DataStore<AsyncRedisCrateClient>> + Send>> {
@@ -100,7 +100,7 @@ fn make_redis_client_factory(
     }
 }
 
-#[instrument(level = "debug", skip_all)]
+#[instrument(level = "debug", name = "infra.start_nature_remo_api_task", skip_all)]
 fn start_nature_remo_api_task<R, T>(
     config: Arc<Config>,
     cancellation_token: CancellationToken,
@@ -111,7 +111,7 @@ where
     R: FnOnce() -> T + Send + 'static,
     T: NatureRemo + Send + 'static, // 具体的な型を指定
 {
-    let task_span = info_span!("templogd.nature_remo_task");
+    let task_span = info_span!("infra.nature_remo.task");
     tokio::spawn(
         async move {
             let client = nature_remo_client();
@@ -121,7 +121,7 @@ where
     )
 }
 
-#[instrument(level = "debug", skip_all)]
+#[instrument(level = "debug", name = "infra.start_datastore_task", skip_all)]
 fn start_datastore_task<F, DFut, DClient>(
     config: Arc<Config>,
     cancellation_token: CancellationToken,
@@ -133,7 +133,7 @@ where
     DFut: Future<Output = DClient> + Send + 'static,
     DClient: DataStoreRepository + Send + 'static,
 {
-    let task_span = info_span!("templogd.redis_task");
+    let task_span = info_span!("infra.redis.task");
     tokio::spawn(
         async move {
             let client = redis_client().await;
@@ -143,7 +143,7 @@ where
     )
 }
 
-#[instrument(level = "debug", skip_all)]
+#[instrument(level = "debug", name = "infra.make_signal_handlers", skip_all)]
 async fn make_signal_handlers(cancellation_token: CancellationToken) {
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("Failed to create SIGTERM signal listener");

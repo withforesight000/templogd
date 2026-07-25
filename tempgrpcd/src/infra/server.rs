@@ -38,7 +38,7 @@ struct AuthInterceptor {
 }
 
 impl Interceptor for AuthInterceptor {
-    #[instrument(level = "info", name = "grpc.authenticate", skip_all)]
+    #[instrument(level = "info", name = "infra.authenticate", skip_all)]
     fn call(&mut self, req: Request<()>) -> Result<Request<()>, Status> {
         let correct_bearer_token = format!("Bearer {}", self.token);
         let token: MetadataValue<_> = correct_bearer_token.parse().unwrap();
@@ -75,7 +75,7 @@ mod tests {
 }
 
 /// Starts the tempgrpcd server, Redis worker, and shutdown handling.
-#[instrument(level = "info", parent = None)]
+#[instrument(level = "info", name = "infra.run", parent = None)]
 pub async fn run(config: Arc<Config>) {
     run_with(
         config,
@@ -86,7 +86,7 @@ pub async fn run(config: Arc<Config>) {
     .await;
 }
 
-#[instrument(level = "debug", skip_all)]
+#[instrument(level = "debug", name = "infra.run_with", skip_all)]
 async fn run_with<SD, SS, SG, SGFut>(config: Arc<Config>, start_datastore: SD, start_signal_handler: SS, start_grpc: SG)
 where
     SD: FnOnce(Arc<Config>, tokio::sync::mpsc::Receiver<DatastoreOperation>, CancellationToken) -> JoinHandle<()>,
@@ -123,21 +123,28 @@ where
     _ = tokio::join!(redis_task);
 }
 
-#[instrument(level = "debug", skip_all)]
+#[instrument(level = "debug", name = "infra.boxed_start_grpc_server_task", skip_all)]
 fn boxed_start_grpc_server_task(
     tx: tokio::sync::mpsc::Sender<DatastoreOperation>,
     config: Arc<Config>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Router> + Send>> {
+    // Tokio repeatedly calls a Future's `poll` method to drive its execution and
+    // ask whether it can make progress: it returns `Pending` when it must wait
+    // for I/O and `Ready` when it has finished. An `async fn` Future stores its
+    // state across `await` points and may contain references to that state, so
+    // it must remain at a stable memory address while Tokio polls it. `Pin`
+    // provides that guarantee, and `Box::pin` stores the Future in a stable
+    // heap allocation.
     Box::pin(start_grpc_server_task(tx, config))
 }
 
-#[instrument(level = "debug", skip_all)]
+#[instrument(level = "debug", name = "infra.start_datastore_task", skip_all)]
 fn start_datastore_task(
     config: Arc<Config>,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) -> JoinHandle<()> {
-    let task_span = info_span!("tempgrpcd.redis_task");
+    let task_span = info_span!("infra.redis.task");
     tokio::spawn(
         async move {
             #[derive(Template)]
@@ -170,7 +177,7 @@ fn start_datastore_task(
     )
 }
 
-#[instrument(level = "debug", skip_all)]
+#[instrument(level = "debug", name = "infra.start_signal_handler_task", skip_all)]
 async fn start_signal_handler_task(cancellation_token: CancellationToken) {
     let mut sigterm = signal(SignalKind::terminate()).expect("Failed to create signal");
     tokio::spawn(
@@ -190,11 +197,11 @@ async fn start_signal_handler_task(cancellation_token: CancellationToken) {
                 }
             }
         }
-        .instrument(info_span!("tempgrpcd.signal_handler_task")),
+        .instrument(info_span!("infra.signal_handler.task")),
     );
 }
 
-#[instrument(level = "debug", parent = None, skip_all)]
+#[instrument(level = "debug", name = "infra.start_grpc_server_task", parent = None, skip_all)]
 async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation>, config: Arc<Config>) -> Router {
     let get_ambient_conditions_uc = GetAmbientConditionsUC::new(tx.clone());
     let get_ambient_conditions_with_sampling_uc = GetAmbientConditionsWithSamplingUC::new(tx);
@@ -206,7 +213,7 @@ async fn start_grpc_server_task(tx: tokio::sync::mpsc::Sender<DatastoreOperation
         .trace_fn(|request| {
             let trace_id = super::request_tracing::new_trace_id();
             info_span!(
-                "grpc.request",
+                "infra.grpc.request",
                 trace_id = %trace_id,
                 method = %request.uri().path(),
             )

@@ -17,7 +17,7 @@ pub struct DataStore<R: Redis + Send + Debug> {
 
 impl<R: Redis + Send + Debug> DataStore<R> {
     /// Creates a datastore adapter around an already connected Redis client.
-    #[instrument(level = "info", name = "redis.datastore_new", skip_all)]
+    #[instrument(level = "info", name = "gateway.redis.new", skip_all)]
     pub async fn new(redis_client: R) -> Self {
         Self { redis_client }
     }
@@ -26,7 +26,12 @@ impl<R: Redis + Send + Debug> DataStore<R> {
     ///
     /// The Lua source is supplied by the caller so startup can render the
     /// configured function name before loading it into Redis.
-    #[instrument(level = "info", name = "redis.load_function_xrange_with_sampling", skip_all, err)]
+    #[instrument(
+        level = "info",
+        name = "gateway.redis.load_function_xrange_with_sampling",
+        skip_all,
+        err
+    )]
     pub async fn load_function_xrange_with_sampling(&mut self, code: &str) -> Result<(), RedisError> {
         let res = self.redis_client.function_load(true, code).await;
         match res {
@@ -47,7 +52,7 @@ impl<R: Redis + Send + Debug> DataStore<R> {
 
 #[async_trait]
 impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
-    #[instrument(level = "info", name = "redis.fetch_ambient_conditions", skip_all, err)]
+    #[instrument(level = "info", name = "gateway.redis.fetch_ambient_conditions", skip_all, err)]
     async fn fetch_ambient_conditions<T: ToRedisArgs + Send + Sync + 'static + Debug>(
         &mut self,
         start: T,
@@ -69,7 +74,12 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         result
     }
 
-    #[instrument(level = "info", name = "redis.fetch_ambient_conditions_with_sampling", skip_all, err)]
+    #[instrument(
+        level = "info",
+        name = "gateway.redis.fetch_ambient_conditions_with_sampling",
+        skip_all,
+        err
+    )]
     async fn fetch_ambient_conditions_with_sampling<T: ToRedisArgs + Send + Sync + 'static + Debug>(
         &mut self,
         start: T,
@@ -94,7 +104,7 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         result
     }
 
-    #[instrument(level = "info", name = "redis.save_ambient_condition", skip_all, err)]
+    #[instrument(level = "info", name = "gateway.redis.save_ambient_condition", skip_all, err)]
     async fn save_ambient_condition(
         &mut self,
         ambient_condition: AmbientConditionModel,
@@ -123,7 +133,7 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
 ///
 /// Redis stream entries are expected to contain an entry ID followed by the
 /// temperature, humidity, and illumination field pairs.
-#[instrument(level = "debug", name = "redis.parse_ambient_conditions", skip_all)]
+#[instrument(level = "debug", name = "gateway.redis.parse_ambient_conditions", skip_all)]
 fn parse_ambient_conditions(values: &redis::Value) -> HashMap<String, AmbientConditionModel> {
     let mut ambient_conditions = HashMap::new();
     for value in values.as_sequence().unwrap() {
