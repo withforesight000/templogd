@@ -9,6 +9,10 @@ use tracing::{instrument, warn};
 pub(crate) enum ServerError {
     #[error("configured bearer token is invalid")]
     InvalidBearerToken(#[source] InvalidMetadataValue),
+    #[error("failed to render the Redis sampling function")]
+    RenderSamplingFunction(#[source] askama::Error),
+    #[error("failed to load the Redis sampling function")]
+    LoadSamplingFunction(#[source] redis::RedisError),
 }
 
 #[derive(Clone)]
