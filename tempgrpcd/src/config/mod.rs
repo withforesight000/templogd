@@ -44,6 +44,14 @@ impl fmt::Debug for Config {
     }
 }
 
+/// Validates command-line configuration and builds the shared tempgrpcd settings.
+///
+/// The returned configuration preserves the bearer token privately and contains
+/// parsed trusted peers, bounded request limits, and the request timeout. This
+/// returns [`ConfigError`] when a trusted peer is malformed or missing in strict
+/// mode, when a limit is zero or exceeds its safety ceiling, or when sampling
+/// could request more entries than an unsampled result permits. It performs no
+/// network or filesystem I/O.
 pub fn new(args: TempgrpcdArgs) -> Result<Arc<Config>, ConfigError> {
     let server_bind_address = args.server_bind_address;
     let server_port = args.server_port;
@@ -130,30 +138,39 @@ impl Config {
         self.redis_port
     }
 
+    /// Returns the transport peer IPs allowed to call history RPCs in strict mode.
     pub fn get_trusted_proxy_ips(&self) -> &HashSet<IpAddr> {
         &self.trusted_proxy_ips
     }
 
+    /// Reports whether authenticated clients may bypass transport-peer validation.
+    ///
+    /// This should be enabled only for explicit local development.
     pub fn allow_direct_clients(&self) -> bool {
         self.allow_direct_clients
     }
 
+    /// Returns the maximum number of Redis entries an unsampled request may return.
     pub fn get_max_result_entries(&self) -> usize {
         self.max_result_entries
     }
 
+    /// Returns the maximum sampling count accepted from one request.
     pub fn get_max_samples(&self) -> u64 {
         self.max_samples
     }
 
+    /// Returns the maximum number of history RPCs admitted concurrently.
     pub fn get_max_concurrent_requests(&self) -> usize {
         self.max_concurrent_requests
     }
 
+    /// Returns the deadline applied to each history request.
     pub fn get_request_timeout(&self) -> Duration {
         self.request_timeout
     }
 
+    /// Reports whether the temporary milliseconds-in-seconds timestamp encoding is accepted.
     pub fn accept_legacy_millisecond_timestamps(&self) -> bool {
         self.accept_legacy_millisecond_timestamps
     }
