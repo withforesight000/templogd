@@ -87,8 +87,8 @@ impl<'a> ValidatedGetAmbientConditionsRequest<'a> {
             return Err(ValidationError::invalid("start_time must be <= end_time"));
         }
 
-        let start_ms = timestamp_milliseconds(start, start_legacy)?;
-        let end_ms = timestamp_milliseconds(end, end_legacy)?;
+        let start_ms = timestamp_milliseconds(start, start_legacy, true)?;
+        let end_ms = timestamp_milliseconds(end, end_legacy, false)?;
         if start_ms > end_ms {
             return Err(ValidationError::invalid("start_time must be <= end_time"));
         }
@@ -114,7 +114,11 @@ fn is_legacy(timestamp: &Timestamp) -> bool {
     timestamp.seconds > PROTOBUF_MAX_SECONDS && timestamp.nanos == 0
 }
 
-fn timestamp_milliseconds(timestamp: &Timestamp, legacy: bool) -> Result<i64, ValidationError> {
+fn timestamp_milliseconds(
+    timestamp: &Timestamp,
+    legacy: bool,
+    round_up_submillisecond: bool,
+) -> Result<i64, ValidationError> {
     if legacy {
         return Ok(timestamp.seconds);
     }
@@ -123,11 +127,17 @@ fn timestamp_milliseconds(timestamp: &Timestamp, legacy: bool) -> Result<i64, Va
             "timestamp seconds are outside the supported range",
         ));
     }
-    timestamp
+    let milliseconds = timestamp
         .seconds
         .checked_mul(1000)
         .and_then(|value| value.checked_add(i64::from(timestamp.nanos) / 1_000_000))
-        .ok_or_else(|| ValidationError::invalid("timestamp cannot be represented as milliseconds"))
+        .ok_or_else(|| ValidationError::invalid("timestamp cannot be represented as milliseconds"))?;
+    if round_up_submillisecond && timestamp.nanos % 1_000_000 != 0 {
+        return milliseconds
+            .checked_add(1)
+            .ok_or_else(|| ValidationError::invalid("timestamp cannot be represented as milliseconds"));
+    }
+    Ok(milliseconds)
 }
 
 #[cfg(test)]
@@ -278,6 +288,26 @@ mod tests {
         assert_eq!(range.start, "1700000000123-0");
         assert_eq!(range.end, "1700000001456-18446744073709551615");
         assert!(!range.used_legacy_encoding);
+    }
+
+    #[test]
+    fn rounds_sub_millisecond_range_boundaries_inward() {
+        let req = request(
+            Some(Timestamp {
+                seconds: 1,
+                nanos: 123_500_000,
+            }),
+            Some(Timestamp {
+                seconds: 2,
+                nanos: 456_500_000,
+            }),
+            None,
+        );
+
+        let range = ValidatedGetAmbientConditionsRequest::from(&req).to_redis_time_range(false).unwrap();
+
+        assert_eq!(range.start, "1124-0");
+        assert_eq!(range.end, "2456-18446744073709551615");
     }
 
     #[test]
