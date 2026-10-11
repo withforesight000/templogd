@@ -63,6 +63,9 @@ impl<
         &self,
         request: tonic::Request<tempgrpcd_protos::tempgrpcd::v1::GetAmbientConditionsRequest>,
     ) -> Result<Response<GetAmbientConditionsResponse>, Status> {
+        let deadline = tokio::time::Instant::now() + self.request_timeout;
+        let cancellation = CancellationToken::new();
+        let _cancellation_guard = RequestCancellationGuard(cancellation.clone());
         let samples = request.get_ref().samples;
         Span::current().record("samples", field::debug(samples));
         Span::current().record("route", if samples.is_some() { "sampling" } else { "plain" });
@@ -76,6 +79,7 @@ impl<
                 "Accepted legacy roomtemp timestamp encoding"
             );
         }
+        ensure_before_deadline(deadline)?;
 
         let _permit = self
             .admission
@@ -85,20 +89,24 @@ impl<
 
         let tempgrpcd_request = request.into_inner();
         let sample = tempgrpcd_request.samples;
-        let cancellation = CancellationToken::new();
-        let _cancellation_guard = RequestCancellationGuard(cancellation.clone());
         let context = QueryContext {
             start: redis_range.start,
             end: redis_range.end,
-            deadline: tokio::time::Instant::now() + self.request_timeout,
+            deadline,
             cancellation,
         };
-        let ambient_conditions = match sample {
-            Some(unwrapped_sample) => self.get_ambient_conditions_with_sampling.run(context, unwrapped_sample).await?,
-            None => self.get_ambient_conditions_uc.run(context).await?,
-        };
+        let ambient_conditions = tokio::time::timeout_at(deadline, async {
+            match sample {
+                Some(unwrapped_sample) => {
+                    self.get_ambient_conditions_with_sampling.run(context, unwrapped_sample).await
+                }
+                None => self.get_ambient_conditions_uc.run(context).await,
+            }
+        })
+        .await
+        .map_err(|_| Status::deadline_exceeded("request deadline exceeded"))??;
 
-        Ok(Response::new(GetAmbientConditionsResponse {
+        let response = Response::new(GetAmbientConditionsResponse {
             ambient_conditions: ambient_conditions
                 .into_iter()
                 .map(|(key, value)| {
@@ -112,8 +120,17 @@ impl<
                     )
                 })
                 .collect(),
-        }))
+        });
+        ensure_before_deadline(deadline)?;
+        Ok(response)
     }
+}
+
+fn ensure_before_deadline(deadline: tokio::time::Instant) -> Result<(), Status> {
+    if tokio::time::Instant::now() >= deadline {
+        return Err(Status::deadline_exceeded("request deadline exceeded"));
+    }
+    Ok(())
 }
 
 struct RequestCancellationGuard(CancellationToken);
@@ -158,6 +175,21 @@ mod tests {
     #[derive(Debug)]
     struct StubSamplingUc {
         tx: mpsc::UnboundedSender<&'static str>,
+    }
+
+    #[derive(Debug)]
+    struct StubDelayedPrimaryUc {
+        delay: Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl GetAmbientConditions for StubDelayedPrimaryUc {
+        async fn run(&self, _context: QueryContext) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
+            std::thread::sleep(self.delay);
+            let mut map = HashMap::new();
+            map.insert("k".into(), common::model::ambient_condition::new(1.0, 2.0, 3.0));
+            Ok(map)
+        }
     }
 
     #[derive(Clone, Default)]
@@ -253,6 +285,25 @@ mod tests {
         let resp = svc.get_ambient_conditions(request(false)).await.unwrap().into_inner();
         assert_eq!(rx_primary.recv().await.unwrap(), "called");
         assert_eq!(resp.ambient_conditions["k"].temperature, 1.0);
+    }
+
+    #[tokio::test]
+    async fn rejects_responses_completed_after_the_rpc_deadline() {
+        let (tx_sampling, _rx_sampling) = mpsc::unbounded_channel();
+        let svc = GetAmbientConditionsImpl::new(
+            StubDelayedPrimaryUc {
+                delay: Duration::from_millis(20),
+            },
+            StubSamplingUc { tx: tx_sampling },
+            1000,
+            4,
+            Duration::from_millis(1),
+            true,
+        );
+
+        let status = svc.get_ambient_conditions(request(false)).await.unwrap_err();
+
+        assert_eq!(status.code(), tonic::Code::DeadlineExceeded);
     }
 
     #[tokio::test]
