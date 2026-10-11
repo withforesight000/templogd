@@ -257,16 +257,67 @@ mod tests {
     }
 
     #[test]
-    fn rejects_limits_above_security_ceilings() {
+    fn rejects_malformed_trusted_proxy_ip() {
         let mut value = args();
-        value.max_samples = MAX_SAMPLES_CEILING + 1;
+        value.trusted_proxy_ips = "192.168.1.1,not-an-ip".into();
 
         assert!(matches!(
             super::new(value),
-            Err(ConfigError::InvalidLimit {
-                name: "max_samples",
-                ..
-            })
+            Err(ConfigError::InvalidTrustedProxyIp { value, .. }) if value == "not-an-ip"
         ));
+    }
+
+    fn assert_invalid_limit(value: crate::TempgrpcdArgs, name: &'static str, ceiling: u64) {
+        assert!(matches!(
+            super::new(value),
+            Err(ConfigError::InvalidLimit {
+                name: actual_name,
+                ceiling: actual_ceiling,
+            }) if actual_name == name && actual_ceiling == ceiling
+        ));
+    }
+
+    #[test]
+    fn rejects_zero_and_above_ceiling_limits() {
+        let mut value = args();
+        value.max_result_entries = 0;
+        assert_invalid_limit(value, "max_result_entries", MAX_RESULT_ENTRIES_CEILING as u64);
+
+        let mut value = args();
+        value.max_result_entries = MAX_RESULT_ENTRIES_CEILING + 1;
+        assert_invalid_limit(value, "max_result_entries", MAX_RESULT_ENTRIES_CEILING as u64);
+
+        let mut value = args();
+        value.max_samples = 0;
+        assert_invalid_limit(value, "max_samples", MAX_SAMPLES_CEILING);
+
+        let mut value = args();
+        value.max_samples = MAX_SAMPLES_CEILING + 1;
+        assert_invalid_limit(value, "max_samples", MAX_SAMPLES_CEILING);
+
+        let mut value = args();
+        value.max_concurrent_requests = 0;
+        assert_invalid_limit(value, "max_concurrent_requests", MAX_CONCURRENT_REQUESTS_CEILING as u64);
+
+        let mut value = args();
+        value.max_concurrent_requests = MAX_CONCURRENT_REQUESTS_CEILING + 1;
+        assert_invalid_limit(value, "max_concurrent_requests", MAX_CONCURRENT_REQUESTS_CEILING as u64);
+
+        let mut value = args();
+        value.request_timeout_milliseconds = 0;
+        assert_invalid_limit(value, "request_timeout_milliseconds", MAX_REQUEST_TIMEOUT_MILLISECONDS);
+
+        let mut value = args();
+        value.request_timeout_milliseconds = MAX_REQUEST_TIMEOUT_MILLISECONDS + 1;
+        assert_invalid_limit(value, "request_timeout_milliseconds", MAX_REQUEST_TIMEOUT_MILLISECONDS);
+    }
+
+    #[test]
+    fn rejects_samples_exceeding_result_limit() {
+        let mut value = args();
+        value.max_result_entries = 10;
+        value.max_samples = 11;
+
+        assert!(matches!(super::new(value), Err(ConfigError::SamplesExceedResults)));
     }
 }
