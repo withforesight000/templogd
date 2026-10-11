@@ -80,6 +80,11 @@ impl<
             );
         }
         ensure_before_deadline(deadline)?;
+        if redis_range.is_empty {
+            return Ok(Response::new(GetAmbientConditionsResponse {
+                ambient_conditions: Default::default(),
+            }));
+        }
 
         let _permit = self
             .admission
@@ -240,6 +245,20 @@ mod tests {
         })
     }
 
+    fn sub_millisecond_empty_request(with_samples: bool) -> Request<GetAmbientConditionsRequest> {
+        request_with_fields(
+            Some(Timestamp {
+                seconds: 1,
+                nanos: 500_000,
+            }),
+            Some(Timestamp {
+                seconds: 1,
+                nanos: 600_000,
+            }),
+            if with_samples { Some(1) } else { None },
+        )
+    }
+
     #[test]
     fn constructor_uses_a_component_specific_span_name() {
         let recorder = SpanRecorder::default();
@@ -285,6 +304,29 @@ mod tests {
         let resp = svc.get_ambient_conditions(request(false)).await.unwrap().into_inner();
         assert_eq!(rx_primary.recv().await.unwrap(), "called");
         assert_eq!(resp.ambient_conditions["k"].temperature, 1.0);
+    }
+
+    #[tokio::test]
+    async fn returns_empty_without_dispatching_rounded_away_ranges() {
+        for with_samples in [false, true] {
+            let (tx_primary, mut rx_primary) = mpsc::unbounded_channel();
+            let (tx_sampling, mut rx_sampling) = mpsc::unbounded_channel();
+            let svc = GetAmbientConditionsImpl::new(
+                StubPrimaryUc { tx: tx_primary },
+                StubSamplingUc { tx: tx_sampling },
+                1000,
+                4,
+                Duration::from_secs(1),
+                true,
+            );
+
+            let response =
+                svc.get_ambient_conditions(sub_millisecond_empty_request(with_samples)).await.unwrap().into_inner();
+
+            assert!(response.ambient_conditions.is_empty());
+            assert!(matches!(rx_primary.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+            assert!(matches!(rx_sampling.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+        }
     }
 
     #[tokio::test]

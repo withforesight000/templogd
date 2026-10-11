@@ -14,6 +14,8 @@ pub struct RedisTimeRange {
     pub start: String,
     pub end: String,
     pub used_legacy_encoding: bool,
+    /// True when inward millisecond rounding leaves no Redis IDs in the requested interval.
+    pub is_empty: bool,
 }
 
 /// Borrows only the request fields needed for validation before dispatch.
@@ -89,14 +91,11 @@ impl<'a> ValidatedGetAmbientConditionsRequest<'a> {
 
         let start_ms = timestamp_milliseconds(start, start_legacy, true)?;
         let end_ms = timestamp_milliseconds(end, end_legacy, false)?;
-        if start_ms > end_ms {
-            return Err(ValidationError::invalid("start_time must be <= end_time"));
-        }
-
         Ok(RedisTimeRange {
             start: format!("{start_ms}-0"),
             end: format!("{end_ms}-{MAX_REDIS_SEQUENCE}"),
             used_legacy_encoding: start_legacy,
+            is_empty: start_ms > end_ms,
         })
     }
 }
@@ -288,6 +287,7 @@ mod tests {
         assert_eq!(range.start, "1700000000123-0");
         assert_eq!(range.end, "1700000001456-18446744073709551615");
         assert!(!range.used_legacy_encoding);
+        assert!(!range.is_empty);
     }
 
     #[test]
@@ -308,6 +308,28 @@ mod tests {
 
         assert_eq!(range.start, "1124-0");
         assert_eq!(range.end, "2456-18446744073709551615");
+        assert!(!range.is_empty);
+    }
+
+    #[test]
+    fn marks_valid_ranges_without_representable_milliseconds_as_empty() {
+        let req = request(
+            Some(Timestamp {
+                seconds: 1,
+                nanos: 500_000,
+            }),
+            Some(Timestamp {
+                seconds: 1,
+                nanos: 600_000,
+            }),
+            None,
+        );
+
+        let range = ValidatedGetAmbientConditionsRequest::from(&req).to_redis_time_range(false).unwrap();
+
+        assert_eq!(range.start, "1001-0");
+        assert_eq!(range.end, "1000-18446744073709551615");
+        assert!(range.is_empty);
     }
 
     #[test]
@@ -330,6 +352,7 @@ mod tests {
         assert_eq!(range.start, "1700000000123-0");
         assert_eq!(range.end, "1700000001456-18446744073709551615");
         assert!(range.used_legacy_encoding);
+        assert!(!range.is_empty);
     }
 
     #[test]
