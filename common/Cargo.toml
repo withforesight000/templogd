@@ -9,7 +9,7 @@ edition = "2024"
 async-trait = { workspace = true }
 chrono = "0.4"
 cfg-if = "1.0"
-nix = { version = "0.30", features = ["fs"] }
+nix = { version = "0.31", features = ["fs"] }
 redis = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
@@ -20,7 +20,7 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-httpmock = "0.7"
+httpmock = "0.8"
 mockall = { workspace = true }
 mockall_double = { version = "0.3" }
 tokio = { workspace = true }

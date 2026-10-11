@@ -215,16 +215,23 @@ mod tests {
         let subscriber = tracing_subscriber::registry().with(recorder);
 
         tracing::subscriber::with_default(subscriber, || {
-            let (tx_primary, _rx_primary) = mpsc::unbounded_channel();
-            let (tx_sampling, _rx_sampling) = mpsc::unbounded_channel();
-            let _svc = GetAmbientConditionsImpl::new(
-                StubPrimaryUc { tx: tx_primary },
-                StubSamplingUc { tx: tx_sampling },
-                1000,
-                4,
-                Duration::from_secs(1),
-                true,
-            );
+            // Other parallel tests can rebuild tracing's process-wide callsite cache.
+            for _ in 0..100 {
+                tracing::callsite::rebuild_interest_cache();
+                let (tx_primary, _rx_primary) = mpsc::unbounded_channel();
+                let (tx_sampling, _rx_sampling) = mpsc::unbounded_channel();
+                let _svc = GetAmbientConditionsImpl::new(
+                    StubPrimaryUc { tx: tx_primary },
+                    StubSamplingUc { tx: tx_sampling },
+                    1000,
+                    4,
+                    Duration::from_secs(1),
+                    true,
+                );
+                if names.lock().unwrap().contains(&"controller.get_ambient_conditions.new") {
+                    break;
+                }
+            }
         });
 
         assert!(names.lock().unwrap().contains(&"controller.get_ambient_conditions.new"));
