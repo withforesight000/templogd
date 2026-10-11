@@ -1,13 +1,15 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use garde::Validate;
 use tempgrpcd_protos::tempgrpcd::v1::{
     AmbientCondition as ProtoAmbientCondition, GetAmbientConditionsResponse, tempgrpcd_service_server::TempgrpcdService,
 };
+use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 use tonic::{Response, Status};
-use tracing::{Span, field, instrument};
+use tracing::{Span, field, instrument, warn};
 
-use crate::usecase::port::{GetAmbientConditions, GetAmbientConditionsWithSampling};
+use crate::usecase::port::{GetAmbientConditions, GetAmbientConditionsWithSampling, QueryContext};
 use crate::validator::error::ValidationError;
 use crate::validator::get_ambient_conditions_request::ValidatedGetAmbientConditionsRequest;
 
@@ -16,15 +18,30 @@ use crate::validator::get_ambient_conditions_request::ValidatedGetAmbientConditi
 pub struct GetAmbientConditionsImpl<G: GetAmbientConditions, S: GetAmbientConditionsWithSampling> {
     get_ambient_conditions_uc: G,
     get_ambient_conditions_with_sampling: S,
+    max_samples: u64,
+    admission: Arc<Semaphore>,
+    request_timeout: Duration,
+    accept_legacy_millisecond_timestamps: bool,
 }
 
 impl<G: GetAmbientConditions + Debug, S: GetAmbientConditionsWithSampling + Debug> GetAmbientConditionsImpl<G, S> {
     /// Creates a controller with plain and sampled ambient-condition use cases.
     #[instrument(level = "info", name = "controller.get_ambient_conditions.new", skip_all)]
-    pub fn new(get_ambient_conditions_uc: G, get_ambient_conditions_with_sampling: S) -> Self {
+    pub fn new(
+        get_ambient_conditions_uc: G,
+        get_ambient_conditions_with_sampling: S,
+        max_samples: u64,
+        max_concurrent_requests: usize,
+        request_timeout: Duration,
+        accept_legacy_millisecond_timestamps: bool,
+    ) -> Self {
         Self {
             get_ambient_conditions_uc,
             get_ambient_conditions_with_sampling,
+            max_samples,
+            admission: Arc::new(Semaphore::new(max_concurrent_requests)),
+            request_timeout,
+            accept_legacy_millisecond_timestamps,
         }
     }
 }
@@ -51,20 +68,34 @@ impl<
         Span::current().record("route", if samples.is_some() { "sampling" } else { "plain" });
         let validated_request: ValidatedGetAmbientConditionsRequest<'_> = request.get_ref().into();
         validated_request.validate().map_err(|error| ValidationError::invalid(format!("Validation error: {error}")))?;
-        validated_request.validate_business_rules()?;
+        validated_request.validate_business_rules(self.max_samples)?;
+        let redis_range = validated_request.to_redis_time_range(self.accept_legacy_millisecond_timestamps)?;
+        if redis_range.used_legacy_encoding {
+            warn!(
+                reason = "legacy_timestamp_encoding",
+                "Accepted legacy roomtemp timestamp encoding"
+            );
+        }
+
+        let _permit = self
+            .admission
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Status::resource_exhausted("too many concurrent ambient condition requests"))?;
 
         let tempgrpcd_request = request.into_inner();
-        let start_time = tempgrpcd_request.start_time.unwrap();
-        let end_time = tempgrpcd_request.end_time.unwrap();
-
         let sample = tempgrpcd_request.samples;
+        let cancellation = CancellationToken::new();
+        let _cancellation_guard = RequestCancellationGuard(cancellation.clone());
+        let context = QueryContext {
+            start: redis_range.start,
+            end: redis_range.end,
+            deadline: tokio::time::Instant::now() + self.request_timeout,
+            cancellation,
+        };
         let ambient_conditions = match sample {
-            Some(unwrapped_sample) => {
-                self.get_ambient_conditions_with_sampling
-                    .run(start_time.seconds, end_time.seconds, unwrapped_sample)
-                    .await?
-            }
-            None => self.get_ambient_conditions_uc.run(start_time.seconds, end_time.seconds).await?,
+            Some(unwrapped_sample) => self.get_ambient_conditions_with_sampling.run(context, unwrapped_sample).await?,
+            None => self.get_ambient_conditions_uc.run(context).await?,
         };
 
         Ok(Response::new(GetAmbientConditionsResponse {
@@ -82,6 +113,14 @@ impl<
                 })
                 .collect(),
         }))
+    }
+}
+
+struct RequestCancellationGuard(CancellationToken);
+
+impl Drop for RequestCancellationGuard {
+    fn drop(&mut self) {
+        self.0.cancel();
     }
 }
 
@@ -108,11 +147,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl GetAmbientConditions for StubPrimaryUc {
-        async fn run(
-            &self,
-            _start_time_seconds: i64,
-            _end_time_seconds: i64,
-        ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
+        async fn run(&self, _context: QueryContext) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
             let _ = self.tx.send("called");
             let mut map = HashMap::new();
             map.insert("k".into(), common::model::ambient_condition::new(1.0, 2.0, 3.0));
@@ -143,8 +178,7 @@ mod tests {
     impl GetAmbientConditionsWithSampling for StubSamplingUc {
         async fn run(
             &self,
-            _start_time_seconds: i64,
-            _end_time_seconds: i64,
+            _context: QueryContext,
             _samples: u64,
         ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
             let _ = self.tx.send("called");
@@ -183,8 +217,14 @@ mod tests {
         tracing::subscriber::with_default(subscriber, || {
             let (tx_primary, _rx_primary) = mpsc::unbounded_channel();
             let (tx_sampling, _rx_sampling) = mpsc::unbounded_channel();
-            let _svc =
-                GetAmbientConditionsImpl::new(StubPrimaryUc { tx: tx_primary }, StubSamplingUc { tx: tx_sampling });
+            let _svc = GetAmbientConditionsImpl::new(
+                StubPrimaryUc { tx: tx_primary },
+                StubSamplingUc { tx: tx_sampling },
+                1000,
+                4,
+                Duration::from_secs(1),
+                true,
+            );
         });
 
         assert!(names.lock().unwrap().contains(&"controller.get_ambient_conditions.new"));
@@ -194,7 +234,14 @@ mod tests {
     async fn routes_without_samples_to_primary_uc() {
         let (tx_primary, mut rx_primary) = mpsc::unbounded_channel();
         let (tx_sampling, _rx_sampling) = mpsc::unbounded_channel();
-        let svc = GetAmbientConditionsImpl::new(StubPrimaryUc { tx: tx_primary }, StubSamplingUc { tx: tx_sampling });
+        let svc = GetAmbientConditionsImpl::new(
+            StubPrimaryUc { tx: tx_primary },
+            StubSamplingUc { tx: tx_sampling },
+            1000,
+            4,
+            Duration::from_secs(1),
+            true,
+        );
 
         let resp = svc.get_ambient_conditions(request(false)).await.unwrap().into_inner();
         assert_eq!(rx_primary.recv().await.unwrap(), "called");
@@ -205,7 +252,14 @@ mod tests {
     async fn routes_with_samples_to_sampling_uc() {
         let (tx_primary, _rx_primary) = mpsc::unbounded_channel();
         let (tx_sampling, mut rx_sampling) = mpsc::unbounded_channel();
-        let svc = GetAmbientConditionsImpl::new(StubPrimaryUc { tx: tx_primary }, StubSamplingUc { tx: tx_sampling });
+        let svc = GetAmbientConditionsImpl::new(
+            StubPrimaryUc { tx: tx_primary },
+            StubSamplingUc { tx: tx_sampling },
+            1000,
+            4,
+            Duration::from_secs(1),
+            true,
+        );
 
         let resp = svc.get_ambient_conditions(request(true)).await.unwrap().into_inner();
         assert_eq!(rx_sampling.recv().await.unwrap(), "called");
@@ -216,7 +270,14 @@ mod tests {
     async fn rejects_missing_start_time_before_routing() {
         let (tx_primary, mut rx_primary) = mpsc::unbounded_channel();
         let (tx_sampling, mut rx_sampling) = mpsc::unbounded_channel();
-        let svc = GetAmbientConditionsImpl::new(StubPrimaryUc { tx: tx_primary }, StubSamplingUc { tx: tx_sampling });
+        let svc = GetAmbientConditionsImpl::new(
+            StubPrimaryUc { tx: tx_primary },
+            StubSamplingUc { tx: tx_sampling },
+            1000,
+            4,
+            Duration::from_secs(1),
+            true,
+        );
 
         let err = svc
             .get_ambient_conditions(request_with_fields(
@@ -236,7 +297,14 @@ mod tests {
     async fn rejects_reversed_time_range_before_routing() {
         let (tx_primary, mut rx_primary) = mpsc::unbounded_channel();
         let (tx_sampling, mut rx_sampling) = mpsc::unbounded_channel();
-        let svc = GetAmbientConditionsImpl::new(StubPrimaryUc { tx: tx_primary }, StubSamplingUc { tx: tx_sampling });
+        let svc = GetAmbientConditionsImpl::new(
+            StubPrimaryUc { tx: tx_primary },
+            StubSamplingUc { tx: tx_sampling },
+            1000,
+            4,
+            Duration::from_secs(1),
+            true,
+        );
 
         let err = svc
             .get_ambient_conditions(request_with_fields(
@@ -256,7 +324,14 @@ mod tests {
     async fn rejects_zero_samples_before_routing() {
         let (tx_primary, mut rx_primary) = mpsc::unbounded_channel();
         let (tx_sampling, mut rx_sampling) = mpsc::unbounded_channel();
-        let svc = GetAmbientConditionsImpl::new(StubPrimaryUc { tx: tx_primary }, StubSamplingUc { tx: tx_sampling });
+        let svc = GetAmbientConditionsImpl::new(
+            StubPrimaryUc { tx: tx_primary },
+            StubSamplingUc { tx: tx_sampling },
+            1000,
+            4,
+            Duration::from_secs(1),
+            true,
+        );
 
         let err = svc
             .get_ambient_conditions(request_with_fields(
@@ -279,11 +354,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl GetAmbientConditions for FailingPrimaryUc {
-            async fn run(
-                &self,
-                _start_time_seconds: i64,
-                _end_time_seconds: i64,
-            ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
+            async fn run(&self, _context: QueryContext) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
                 Err(UsecaseError::dependency_unavailable(
                     "ambient condition request channel closed",
                 ))
@@ -297,15 +368,21 @@ mod tests {
         impl GetAmbientConditionsWithSampling for NeverCalledSamplingUc {
             async fn run(
                 &self,
-                _start_time_seconds: i64,
-                _end_time_seconds: i64,
+                _context: QueryContext,
                 _samples: u64,
             ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
                 panic!("should not be called");
             }
         }
 
-        let svc = GetAmbientConditionsImpl::new(FailingPrimaryUc, NeverCalledSamplingUc);
+        let svc = GetAmbientConditionsImpl::new(
+            FailingPrimaryUc,
+            NeverCalledSamplingUc,
+            1000,
+            4,
+            Duration::from_secs(1),
+            true,
+        );
 
         let err = svc.get_ambient_conditions(request(false)).await.unwrap_err();
 
@@ -320,11 +397,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl GetAmbientConditions for NeverCalledPrimaryUc {
-            async fn run(
-                &self,
-                _start_time_seconds: i64,
-                _end_time_seconds: i64,
-            ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
+            async fn run(&self, _context: QueryContext) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
                 panic!("should not be called");
             }
         }
@@ -336,19 +409,80 @@ mod tests {
         impl GetAmbientConditionsWithSampling for FailingSamplingUc {
             async fn run(
                 &self,
-                _start_time_seconds: i64,
-                _end_time_seconds: i64,
+                _context: QueryContext,
                 _samples: u64,
             ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
                 Err(UsecaseError::dependency_unavailable("sampling channel closed"))
             }
         }
 
-        let svc = GetAmbientConditionsImpl::new(NeverCalledPrimaryUc, FailingSamplingUc);
+        let svc = GetAmbientConditionsImpl::new(
+            NeverCalledPrimaryUc,
+            FailingSamplingUc,
+            1000,
+            4,
+            Duration::from_secs(1),
+            true,
+        );
 
         let err = svc.get_ambient_conditions(request(true)).await.unwrap_err();
 
         assert_eq!(err.code(), tonic::Code::Unavailable);
         assert_eq!(err.message(), "sampling channel closed");
+    }
+
+    #[tokio::test]
+    async fn rejects_work_above_the_global_concurrency_limit() {
+        #[derive(Debug)]
+        struct BlockingPrimaryUc {
+            started: mpsc::UnboundedSender<()>,
+            release: Arc<tokio::sync::Notify>,
+        }
+
+        #[async_trait::async_trait]
+        impl GetAmbientConditions for BlockingPrimaryUc {
+            async fn run(&self, _context: QueryContext) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
+                let _ = self.started.send(());
+                self.release.notified().await;
+                Ok(HashMap::new())
+            }
+        }
+
+        #[derive(Debug)]
+        struct UnusedSamplingUc;
+
+        #[async_trait::async_trait]
+        impl GetAmbientConditionsWithSampling for UnusedSamplingUc {
+            async fn run(
+                &self,
+                _context: QueryContext,
+                _samples: u64,
+            ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
+                panic!("sampling should not be called")
+            }
+        }
+
+        let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let service = Arc::new(GetAmbientConditionsImpl::new(
+            BlockingPrimaryUc {
+                started: started_tx,
+                release: release.clone(),
+            },
+            UnusedSamplingUc,
+            1000,
+            1,
+            Duration::from_secs(1),
+            false,
+        ));
+        let first_service = service.clone();
+        let first = tokio::spawn(async move { first_service.get_ambient_conditions(request(false)).await });
+        started_rx.recv().await.unwrap();
+
+        let error = service.get_ambient_conditions(request(false)).await.unwrap_err();
+
+        assert_eq!(error.code(), tonic::Code::ResourceExhausted);
+        release.notify_one();
+        assert!(first.await.unwrap().is_ok());
     }
 }

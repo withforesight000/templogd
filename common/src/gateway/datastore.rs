@@ -8,7 +8,7 @@ use tracing::{error, info, instrument, warn};
 
 use super::interface::redis::Redis;
 use crate::model::ambient_condition::{self, AmbientCondition as AmbientConditionModel};
-use crate::model::repository::datastore::DataStoreRepository;
+use crate::model::repository::datastore::{DataStoreError, DataStoreRepository};
 
 const MAX_RETRY_ATTEMPTS: u32 = 3;
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(100);
@@ -89,15 +89,24 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         &mut self,
         start: T,
         end: T,
-    ) -> Result<HashMap<String, AmbientConditionModel>, RedisError> {
+        max_entries: usize,
+    ) -> Result<HashMap<String, AmbientConditionModel>, DataStoreError> {
         let result = self
             .retry_redis_operation("redis.fetch_ambient_conditions", |redis| {
                 let start = start.clone();
                 let end = end.clone();
-                Box::pin(async move { redis.xrange("ambient_condition", start, end).await })
+                Box::pin(async move {
+                    redis.xrange_count("ambient_condition", start, end, max_entries.saturating_add(1)).await
+                })
             })
             .await
-            .and_then(|values| parse_ambient_conditions(&values));
+            .map_err(DataStoreError::from)
+            .and_then(|values| {
+                if stream_entry_count(&values).map_err(DataStoreError::from)? > max_entries {
+                    return Err(DataStoreError::ResultLimitExceeded { limit: max_entries });
+                }
+                parse_ambient_conditions(&values).map_err(DataStoreError::from)
+            });
         match &result {
             Ok(values) => info!(
                 operation = "redis.fetch_ambient_conditions",
@@ -120,14 +129,15 @@ impl<R: Redis + Send + Debug> DataStoreRepository for DataStore<R> {
         start: T,
         end: T,
         samples: T,
-    ) -> Result<HashMap<String, AmbientConditionModel>, RedisError> {
+    ) -> Result<HashMap<String, AmbientConditionModel>, DataStoreError> {
         let result = self
             .retry_redis_operation("redis.fetch_ambient_conditions_with_sampling", |redis| {
                 let args = [start.clone(), end.clone(), samples.clone()];
                 Box::pin(async move { redis.fcall("xrange_with_sampling", &["ambient_condition"], &args).await })
             })
             .await
-            .and_then(|values| parse_ambient_conditions(&values));
+            .map_err(DataStoreError::from)
+            .and_then(|values| parse_ambient_conditions(&values).map_err(DataStoreError::from));
         match &result {
             Ok(values) => info!(
                 operation = "redis.fetch_ambient_conditions_with_sampling",
@@ -236,6 +246,13 @@ fn parse_ambient_conditions(values: &redis::Value) -> Result<HashMap<String, Amb
     Ok(ambient_conditions)
 }
 
+fn stream_entry_count(values: &redis::Value) -> Result<usize, RedisError> {
+    match values {
+        redis::Value::Array(entries) | redis::Value::Set(entries) => Ok(entries.len()),
+        _ => Err(invalid_stream_response("expected a Redis stream response array")),
+    }
+}
+
 /// Creates a typed Redis error for a malformed stream response.
 fn invalid_stream_response(message: &'static str) -> RedisError {
     RedisError::from((ErrorKind::UnexpectedReturnType, message))
@@ -273,11 +290,12 @@ mod tests {
                 items: &[(T, U)],
             ) -> Result<Value, RedisError>;
 
-            async fn xrange<T: ToRedisArgs + Send + Sync + 'static, U: ToRedisArgs + Send + Sync + 'static>(
+            async fn xrange_count<T: ToRedisArgs + Send + Sync + 'static, U: ToRedisArgs + Send + Sync + 'static>(
                 &mut self,
                 key: &str,
                 start: T,
                 end: U,
+                count: usize,
             ) -> Result<Value, RedisError>;
         }
     }
@@ -329,10 +347,13 @@ mod tests {
     #[tokio::test]
     async fn fetch_ambient_conditions_parses_stream() {
         let mut redis = MockRedisClient::new();
-        redis.expect_xrange().returning(|_, _start: String, _end: String| Ok(sample_stream_value()));
+        redis.expect_xrange_count().returning(|_, _start: String, _end: String, count| {
+            assert_eq!(count, 5001);
+            Ok(sample_stream_value())
+        });
 
         let mut datastore = DataStore::new(redis).await;
-        let map = datastore.fetch_ambient_conditions("0-0".to_string(), "1-0".to_string()).await.unwrap();
+        let map = datastore.fetch_ambient_conditions("0-0".to_string(), "1-0".to_string(), 5000).await.unwrap();
 
         let condition = map.get("1-0").unwrap();
         assert!((condition.get_temperature() - 23.5).abs() < f64::EPSILON);
@@ -343,12 +364,26 @@ mod tests {
     #[tokio::test]
     async fn fetch_ambient_conditions_propagates_error() {
         let mut redis = MockRedisClient::new();
-        redis.expect_xrange().returning(|_, _start: String, _end: String| Err(redis_err()));
+        redis.expect_xrange_count().returning(|_, _start: String, _end: String, _| Err(redis_err()));
 
         let mut datastore = DataStore::new(redis).await;
-        let result = datastore.fetch_ambient_conditions("0".to_string(), "1".to_string()).await;
+        let result = datastore.fetch_ambient_conditions("0".to_string(), "1".to_string(), 5000).await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_ambient_conditions_rejects_a_sentinel_entry_over_the_limit() {
+        let mut redis = MockRedisClient::new();
+        redis.expect_xrange_count().returning(|_, _start: String, _end: String, count| {
+            assert_eq!(count, 2);
+            Ok(Value::Array(vec![Value::Nil, Value::Nil]))
+        });
+
+        let mut datastore = DataStore::new(redis).await;
+        let result = datastore.fetch_ambient_conditions("0".to_string(), "1".to_string(), 1).await;
+
+        assert!(matches!(result, Err(DataStoreError::ResultLimitExceeded { limit: 1 })));
     }
 
     #[tokio::test]
@@ -356,7 +391,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let expected_calls = calls.clone();
         let mut redis = MockRedisClient::new();
-        redis.expect_xrange().returning(move |_, _start: String, _end: String| {
+        redis.expect_xrange_count().returning(move |_, _start: String, _end: String, _| {
             let attempt = calls.fetch_add(1, Ordering::SeqCst);
             if attempt < 2 {
                 Err(redis_err())
@@ -366,7 +401,7 @@ mod tests {
         });
 
         let mut datastore = DataStore::new(redis).await;
-        let result = datastore.fetch_ambient_conditions("0".to_string(), "1".to_string()).await;
+        let result = datastore.fetch_ambient_conditions("0".to_string(), "1".to_string(), 5000).await;
 
         assert!(result.is_ok());
         assert_eq!(expected_calls.load(Ordering::SeqCst), 3);
@@ -377,13 +412,13 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let expected_calls = calls.clone();
         let mut redis = MockRedisClient::new();
-        redis.expect_xrange().returning(move |_, _start: String, _end: String| {
+        redis.expect_xrange_count().returning(move |_, _start: String, _end: String, _| {
             calls.fetch_add(1, Ordering::SeqCst);
             Err(RedisError::from((ErrorKind::InvalidClientConfig, "invalid request")))
         });
 
         let mut datastore = DataStore::new(redis).await;
-        let result = datastore.fetch_ambient_conditions("0".to_string(), "1".to_string()).await;
+        let result = datastore.fetch_ambient_conditions("0".to_string(), "1".to_string(), 5000).await;
 
         assert!(result.is_err());
         assert_eq!(expected_calls.load(Ordering::SeqCst), 1);

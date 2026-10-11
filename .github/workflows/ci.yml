@@ -34,6 +34,16 @@ jobs:
   test_coverage:
     name: Run tests and coverage
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.2
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - name: Install system dependencies
@@ -45,6 +55,10 @@ jobs:
       - uses: cargo-bins/cargo-binstall@main
       - name: Run tests
         run: cargo test --workspace --all-features --no-fail-fast
+      - name: Validate sampling function against Redis 7
+        env:
+          TEMPGRPCD_TEST_REDIS_URL: redis://127.0.0.1:6379
+        run: cargo test -p tempgrpcd infra::tasks::tests::redis_rejects_invalid_sampling_counts -- --exact
       - name: Install LLVM (for coverage)
         run: sudo apt-get update && sudo apt-get install -y llvm clang lld
       - name: Install cargo-llvm-cov

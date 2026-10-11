@@ -6,6 +6,10 @@ redis.register_function('{{ function_name }}', function(keys, args)
     local sample_count = tonumber(args[3])
     local result = {}
 
+    if sample_count == nil or sample_count ~= math.floor(sample_count) or sample_count < 1 or sample_count > 1000 then
+        return redis.error_reply('sample_count must be an integer between 1 and 1000')
+    end
+
     -- 範囲内を sample_count+1 件だけ取得して件数をチェック
     local head = redis.call('XRANGE', stream_key, start_id, end_id, 'COUNT', sample_count+1)
     if #head <= sample_count then

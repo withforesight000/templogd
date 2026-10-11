@@ -7,6 +7,9 @@ use tracing::{debug, instrument};
 
 use crate::gateway::interface::redis::Redis;
 
+// async-trait generates a must-use Future for each method; the Future already
+// carries Rust's built-in must-use contract.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait RedisConnection: Debug + Send {
     async fn query_value(&mut self, cmd: redis::Cmd) -> Result<Value, RedisError>;
@@ -133,14 +136,17 @@ impl<C: RedisConnection> Redis for AsyncRedisCrateClient<C> {
         self.connection.xadd(key, id, items).await
     }
 
-    #[instrument(level = "info", name = "infra.redis.xrange", skip_all, err)]
-    async fn xrange<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
+    #[instrument(level = "info", name = "infra.redis.xrange_count", skip_all, err)]
+    async fn xrange_count<T: ToRedisArgs + Send + Sync, U: ToRedisArgs + Send + Sync>(
         &mut self,
         key: &str,
         start: T,
         end: U,
+        count: usize,
     ) -> Result<Value, RedisError> {
-        self.connection.xrange(key, start, end).await
+        let mut command = cmd("XRANGE");
+        command.arg(key).arg(start).arg(end).arg("COUNT").arg(count);
+        self.connection.query_value(command).await
     }
 }
 
@@ -258,7 +264,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn xadd_and_xrange_delegate_to_connection() {
+    async fn xadd_and_xrange_count_delegate_to_connection() {
         let mock = MockConnection::default();
         let spy = mock.clone();
         let mut client = AsyncRedisCrateClient::new_with_connection(mock);
@@ -269,10 +275,11 @@ mod tests {
             Some(("ambient_condition".to_string(), "*".to_string()))
         );
 
-        let _ = client.xrange("ambient_condition", "0-0".to_string(), "1-0".to_string()).await.unwrap();
-        let (key, start, end) = spy.last_xrange.lock().unwrap().clone().unwrap();
-        assert_eq!(key, "ambient_condition");
-        assert!(start.contains("0-0"));
-        assert!(end.contains("1-0"));
+        let _ = client.xrange_count("ambient_condition", "0-0".to_string(), "1-0".to_string(), 5001).await.unwrap();
+        let packed = spy.last_query_as_string().unwrap();
+        assert!(packed.contains("XRANGE"));
+        assert!(packed.contains("ambient_condition"));
+        assert!(packed.contains("COUNT"));
+        assert!(packed.contains("5001"));
     }
 }

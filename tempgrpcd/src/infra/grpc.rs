@@ -44,12 +44,30 @@ pub(super) async fn start_grpc_server_task(
     tx: mpsc::Sender<DatastoreOperation>,
     config: Arc<Config>,
 ) -> Result<Router, ServerError> {
-    let auth_interceptor = AuthInterceptor::new(config.get_bearer_token()).map_err(ServerError::InvalidBearerToken)?;
-    let get_ambient_conditions_uc = GetAmbientConditionsUC::new(tx.clone());
+    let auth_interceptor = AuthInterceptor::new(
+        config.get_bearer_token(),
+        config.get_trusted_proxy_ips(),
+        config.allow_direct_clients(),
+    )
+    .map_err(ServerError::InvalidBearerToken)?;
+    let get_ambient_conditions_uc = GetAmbientConditionsUC::new(tx.clone(), config.get_max_result_entries());
     let get_ambient_conditions_with_sampling_uc = GetAmbientConditionsWithSamplingUC::new(tx);
-    let grpc_service = TempgrpcdController::new(get_ambient_conditions_uc, get_ambient_conditions_with_sampling_uc);
+    let grpc_service = TempgrpcdController::new(
+        get_ambient_conditions_uc,
+        get_ambient_conditions_with_sampling_uc,
+        config.get_max_samples(),
+        config.get_max_concurrent_requests(),
+        config.get_request_timeout(),
+        config.accept_legacy_millisecond_timestamps(),
+    );
     let (reporter, health_server) = tonic_health::server::health_reporter();
     reporter.set_serving::<TempgrpcdServiceServer<TempgrpcdController>>().await;
+
+    let reflection = Builder::configure()
+        .register_encoded_file_descriptor_set(tempgrpcd_protos::tempgrpcd::v1::FILE_DESCRIPTOR_SET)
+        .register_encoded_file_descriptor_set(tonic_health::pb::FILE_DESCRIPTOR_SET)
+        .build_v1()
+        .map_err(ServerError::BuildReflection)?;
 
     Ok(Server::builder()
         .trace_fn(|request| {
@@ -61,12 +79,6 @@ pub(super) async fn start_grpc_server_task(
             )
         })
         .add_service(TempgrpcdServiceServer::with_interceptor(grpc_service, auth_interceptor))
-        .add_service(
-            Builder::configure()
-                .register_encoded_file_descriptor_set(tempgrpcd_protos::tempgrpcd::v1::FILE_DESCRIPTOR_SET)
-                .register_encoded_file_descriptor_set(tonic_health::pb::FILE_DESCRIPTOR_SET)
-                .build_v1()
-                .unwrap(),
-        )
+        .add_service(reflection)
         .add_service(health_server))
 }

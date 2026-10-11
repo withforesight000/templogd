@@ -32,6 +32,38 @@ struct TempgrpcdArgs {
     #[arg(long, default_value_t = 6379, env = "TEMPGRPCD_REDIS_PORT")]
     redis_port: i32,
 
+    /// Comma-separated transport peer IPs allowed to call the history API.
+    #[arg(long, default_value = "", env = "TEMPGRPCD_TRUSTED_PROXY_IPS")]
+    trusted_proxy_ips: String,
+
+    /// Permit authenticated callers without transport-peer validation (development only).
+    #[arg(long, default_value_t = false, env = "TEMPGRPCD_ALLOW_DIRECT_CLIENTS")]
+    allow_direct_clients: bool,
+
+    /// Maximum number of entries returned by an unsampled query.
+    #[arg(long, default_value_t = 5000, env = "TEMPGRPCD_MAX_RESULT_ENTRIES")]
+    max_result_entries: usize,
+
+    /// Maximum permitted sampling count.
+    #[arg(long, default_value_t = 1000, env = "TEMPGRPCD_MAX_SAMPLES")]
+    max_samples: u64,
+
+    /// Maximum number of history RPCs admitted across all connections.
+    #[arg(long, default_value_t = 4, env = "TEMPGRPCD_MAX_CONCURRENT_REQUESTS")]
+    max_concurrent_requests: usize,
+
+    /// Request deadline in milliseconds.
+    #[arg(long, default_value_t = 5000, env = "TEMPGRPCD_REQUEST_TIMEOUT_MILLISECONDS")]
+    request_timeout_milliseconds: u64,
+
+    /// Temporarily accept the legacy roomtemp milliseconds-in-seconds encoding.
+    #[arg(
+        long,
+        default_value_t = false,
+        env = "TEMPGRPCD_ACCEPT_LEGACY_MILLISECOND_TIMESTAMPS"
+    )]
+    accept_legacy_millisecond_timestamps: bool,
+
     /// Log output format: json or text.
     #[arg(long, value_enum, default_value_t = LogFormat::Json, env = "TEMPGRPCD_LOG_FORMAT")]
     log_format: LogFormat,
@@ -101,7 +133,13 @@ async fn main() {
     init_logging(args.log_format, args.log_level);
     info!("starting tempgrpcd...");
 
-    let config = config::new(args);
+    let config = match config::new(args) {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::error!(error = %error, "invalid tempgrpcd configuration");
+            std::process::exit(1);
+        }
+    };
     info!("config loaded");
 
     match infra::server::run(config).await {

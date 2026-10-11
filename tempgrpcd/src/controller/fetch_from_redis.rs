@@ -6,7 +6,7 @@ use tracing::instrument;
 
 #[instrument(level = "info", name = "controller.fetch_from_redis", skip_all)]
 pub async fn run(
-    client: impl DataStoreRepository,
+    client: impl DataStoreRepository + Send,
     rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
@@ -17,6 +17,7 @@ pub async fn run(
 mod tests {
     use super::*;
     use common::model::ambient_condition;
+    use common::model::repository::datastore::DataStoreError;
     use mockall::mock;
     use redis::{RedisError, ToRedisArgs, Value};
     use tokio::sync::oneshot;
@@ -32,7 +33,8 @@ mod tests {
                 &mut self,
                 start: T,
                 end: T,
-            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, RedisError>;
+                max_entries: usize,
+            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, DataStoreError>;
 
             async fn fetch_ambient_conditions_with_sampling<
                 T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
@@ -41,7 +43,7 @@ mod tests {
                 start: T,
                 end: T,
                 samples: T,
-            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, RedisError>;
+            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, DataStoreError>;
 
             async fn save_ambient_condition(
                 &mut self,
@@ -53,9 +55,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn controller_delegates_fetch_operation() {
         let mut datastore = MockDataStore::new();
-        datastore.expect_fetch_ambient_conditions().returning(|start: String, end: String| {
+        datastore.expect_fetch_ambient_conditions().returning(|start: String, end: String, max_entries| {
             assert_eq!(start, "0");
             assert_eq!(end, "1");
+            assert_eq!(max_entries, 5000);
             Ok(std::collections::HashMap::new())
         });
 
@@ -68,6 +71,9 @@ mod tests {
             tx.send(DatastoreOperation::FetchAmbientConditions {
                 start: "0".into(),
                 end: "1".into(),
+                max_entries: 5000,
+                deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+                cancellation: CancellationToken::new(),
                 span: tracing::Span::current(),
                 resp: resp_tx,
             })

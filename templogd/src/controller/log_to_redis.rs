@@ -22,6 +22,7 @@ pub async fn run(
 mod tests {
     use super::*;
     use common::model::ambient_condition;
+    use common::model::repository::datastore::DataStoreError;
     use mockall::mock;
     use redis::{RedisError, ToRedisArgs, Value};
 
@@ -36,7 +37,8 @@ mod tests {
                 &mut self,
                 start: T,
                 end: T,
-            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, RedisError>;
+                max_entries: usize,
+            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, DataStoreError>;
 
             async fn fetch_ambient_conditions_with_sampling<
                 T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
@@ -45,7 +47,7 @@ mod tests {
                 start: T,
                 end: T,
                 samples: T,
-            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, RedisError>;
+            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, DataStoreError>;
 
             async fn save_ambient_condition(
                 &mut self,
@@ -99,6 +101,9 @@ mod tests {
         tx.send(DatastoreOperation::FetchAmbientConditions {
             start: "0".into(),
             end: "1".into(),
+            max_entries: 5000,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation: CancellationToken::new(),
             span: tracing::Span::current(),
             resp: resp_tx,
         })
@@ -124,6 +129,8 @@ mod tests {
             start: "0".into(),
             end: "1".into(),
             samples: "2".into(),
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation: CancellationToken::new(),
             span: tracing::Span::current(),
             resp: resp_tx,
         })
