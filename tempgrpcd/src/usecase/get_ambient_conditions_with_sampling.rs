@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use tracing::{Span, debug, info, instrument};
 
 use crate::usecase::error::UsecaseError;
-use crate::usecase::port::GetAmbientConditionsWithSampling;
+use crate::usecase::port::{GetAmbientConditionsWithSampling, QueryContext};
 
 #[derive(Debug)]
 pub struct GetAmbientConditionsWithSamplingUC {
@@ -25,8 +25,7 @@ impl GetAmbientConditionsWithSampling for GetAmbientConditionsWithSamplingUC {
     #[instrument(level = "info", name = "usecase.get_ambient_conditions_with_sampling", skip_all, err)]
     async fn run(
         &self,
-        start_time_seconds: i64,
-        end_time_seconds: i64,
+        context: QueryContext,
         samples: u64,
     ) -> Result<HashMap<String, AmbientCondition>, UsecaseError> {
         debug!(
@@ -34,24 +33,39 @@ impl GetAmbientConditionsWithSampling for GetAmbientConditionsWithSamplingUC {
             "Redis sampling fetch queued"
         );
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-        self.tx
-            .send(DatastoreOperation::FetchAmbientConditionsWithSampling {
-                start: start_time_seconds.to_string(),
-                end: end_time_seconds.to_string(),
-                samples: samples.to_string(),
-                span: Span::current(),
-                resp: resp_tx,
-            })
-            .await
-            .map_err(|_| UsecaseError::dependency_unavailable("ambient condition request channel closed"))?;
+        let operation = DatastoreOperation::FetchAmbientConditionsWithSampling {
+            start: context.start,
+            end: context.end,
+            samples: samples.to_string(),
+            deadline: context.deadline,
+            cancellation: context.cancellation.clone(),
+            span: Span::current(),
+            resp: resp_tx,
+        };
+        match self.tx.try_send(operation) {
+            Ok(()) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                return Err(UsecaseError::resource_exhausted(
+                    "ambient condition request queue is full",
+                ));
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                return Err(UsecaseError::dependency_unavailable(
+                    "ambient condition request channel closed",
+                ));
+            }
+        }
         info!(
             operation = "redis.fetch_ambient_conditions_with_sampling",
             "Redis sampling fetch queued"
         );
 
-        let ambient_conditions = resp_rx
-            .await
-            .map_err(|_| UsecaseError::dependency_unavailable("ambient condition response channel closed"))??;
+        let ambient_conditions = tokio::select! {
+            response = resp_rx => response
+                .map_err(|_| UsecaseError::dependency_unavailable("ambient condition response channel closed"))??,
+            _ = tokio::time::sleep_until(context.deadline) => return Err(UsecaseError::DeadlineExceeded),
+            _ = context.cancellation.cancelled() => return Err(UsecaseError::Cancelled),
+        };
         debug!(
             operation = "redis.fetch_ambient_conditions_with_sampling",
             count = ambient_conditions.len(),
@@ -69,6 +83,15 @@ mod tests {
     use common::model::repository::datastore::DataStoreError;
     use tokio::sync::mpsc;
 
+    fn context() -> QueryContext {
+        QueryContext {
+            start: "0-0".into(),
+            end: "1-18446744073709551615".into(),
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+        }
+    }
+
     #[tokio::test]
     async fn forwards_sampling_request() {
         let (tx, mut rx) = mpsc::channel(1);
@@ -83,8 +106,8 @@ mod tests {
                 ..
             }) = rx.recv().await
             {
-                assert_eq!(start, "0");
-                assert_eq!(end, "1");
+                assert_eq!(start, "0-0");
+                assert_eq!(end, "1-18446744073709551615");
                 assert_eq!(samples, "5");
                 let mut map = std::collections::HashMap::new();
                 map.insert("k".into(), common::model::ambient_condition::new(1.0, 2.0, 3.0));
@@ -94,7 +117,7 @@ mod tests {
             }
         });
 
-        let resp = uc.run(0, 1, 5).await.unwrap();
+        let resp = uc.run(context(), 5).await.unwrap();
         assert_eq!(resp["k"].get_humidity(), 2.0);
         handle.await.unwrap();
     }
@@ -110,7 +133,7 @@ mod tests {
             }
         });
 
-        let err = uc.run(0, 1, 5).await.unwrap_err();
+        let err = uc.run(context(), 5).await.unwrap_err();
 
         assert!(
             matches!(err, UsecaseError::DependencyUnavailable(message) if message == "ambient condition response channel closed")
@@ -132,7 +155,7 @@ mod tests {
             }
         });
 
-        let err = uc.run(0, 1, 5).await.unwrap_err();
+        let err = uc.run(context(), 5).await.unwrap_err();
 
         assert!(matches!(
             err,

@@ -11,6 +11,18 @@ pub enum DataStoreError {
     /// The datastore could not complete the requested operation.
     #[error("data store operation failed")]
     Unavailable(#[source] RedisError),
+
+    /// A query matched more entries than the configured response limit.
+    #[error("data store result limit exceeded")]
+    ResultLimitExceeded { limit: usize },
+
+    /// The caller's deadline elapsed before the datastore operation completed.
+    #[error("data store operation deadline exceeded")]
+    DeadlineExceeded,
+
+    /// The caller abandoned the datastore operation.
+    #[error("data store operation cancelled")]
+    Cancelled,
 }
 
 impl From<RedisError> for DataStoreError {
@@ -19,6 +31,9 @@ impl From<RedisError> for DataStoreError {
     }
 }
 
+// async-trait generates a must-use Future for each method; the Future already
+// carries Rust's built-in must-use contract.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait DataStoreRepository {
     /// Fetch ambient conditions between two Redis stream timestamps.
@@ -31,7 +46,8 @@ pub trait DataStoreRepository {
         &mut self,
         start: T,
         end: T,
-    ) -> Result<HashMap<String, AmbientConditionModel>, RedisError>;
+        max_entries: usize,
+    ) -> Result<HashMap<String, AmbientConditionModel>, DataStoreError>;
 
     /// Fetch ambient conditions between two Redis stream timestamps with sampling.
     ///
@@ -44,7 +60,7 @@ pub trait DataStoreRepository {
         start: T,
         end: T,
         samples: T,
-    ) -> Result<HashMap<String, AmbientConditionModel>, RedisError>;
+    ) -> Result<HashMap<String, AmbientConditionModel>, DataStoreError>;
 
     /// Save one ambient condition to Redis.
     ///

@@ -302,7 +302,11 @@ mod tests {
             &mut self,
             _start: T,
             _end: T,
-        ) -> Result<HashMap<String, common::model::ambient_condition::AmbientCondition>, redis::RedisError> {
+            _max_entries: usize,
+        ) -> Result<
+            HashMap<String, common::model::ambient_condition::AmbientCondition>,
+            common::model::repository::datastore::DataStoreError,
+        > {
             Ok(HashMap::new())
         }
 
@@ -311,7 +315,10 @@ mod tests {
             _start: T,
             _end: T,
             _samples: T,
-        ) -> Result<HashMap<String, common::model::ambient_condition::AmbientCondition>, redis::RedisError> {
+        ) -> Result<
+            HashMap<String, common::model::ambient_condition::AmbientCondition>,
+            common::model::repository::datastore::DataStoreError,
+        > {
             Ok(HashMap::new())
         }
 
@@ -456,8 +463,11 @@ mod tests {
                 &mut self,
                 _start: T,
                 _end: T,
-            ) -> Result<HashMap<String, common::model::ambient_condition::AmbientCondition>, redis::RedisError>
-            {
+                _max_entries: usize,
+            ) -> Result<
+                HashMap<String, common::model::ambient_condition::AmbientCondition>,
+                common::model::repository::datastore::DataStoreError,
+            > {
                 Ok(HashMap::new())
             }
 
@@ -466,8 +476,10 @@ mod tests {
                 _start: T,
                 _end: T,
                 _samples: T,
-            ) -> Result<HashMap<String, common::model::ambient_condition::AmbientCondition>, redis::RedisError>
-            {
+            ) -> Result<
+                HashMap<String, common::model::ambient_condition::AmbientCondition>,
+                common::model::repository::datastore::DataStoreError,
+            > {
                 Ok(HashMap::new())
             }
 

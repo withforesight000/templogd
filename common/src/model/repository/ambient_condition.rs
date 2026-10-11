@@ -6,6 +6,9 @@ use redis::{RedisError, ToRedisArgs};
 
 use crate::model::ambient_condition::AmbientCondition as AmbientConditionModel;
 
+// async-trait generates a must-use Future for each method; the Future already
+// carries Rust's built-in must-use contract.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait AmbientCondition {
     // fetch a current ambient condition from Nature Remo API

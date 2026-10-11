@@ -1,3 +1,4 @@
+use common::model::repository::datastore::DataStoreError;
 use common::model::repository::datastore::DataStoreRepository;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info, instrument};
@@ -10,7 +11,7 @@ use common::model::channel::datastore_operation::DatastoreOperation;
 /// typed datastore errors carried by the response channels.
 #[instrument(level = "info", name = "usecase.fetch_from_redis", skip_all)]
 pub async fn run(
-    mut client: impl DataStoreRepository,
+    mut client: impl DataStoreRepository + Send,
     mut rx: tokio::sync::mpsc::Receiver<DatastoreOperation>,
     cancellation_token: CancellationToken,
 ) {
@@ -24,12 +25,34 @@ pub async fn run(
 
                 log_received_operation(&operation);
                 match operation {
-                    DatastoreOperation::FetchAmbientConditions { start, end, span, resp } => {
-                        let res = client
-                            .fetch_ambient_conditions(start, end)
-                            .instrument(span.clone())
-                            .await
-                            .map_err(Into::into);
+                    DatastoreOperation::FetchAmbientConditions {
+                        start,
+                        end,
+                        max_entries,
+                        deadline,
+                        cancellation,
+                        span,
+                        resp,
+                    } => {
+                        if cancellation.is_cancelled() {
+                            let _ = resp.send(Err(DataStoreError::Cancelled));
+                            continue;
+                        }
+                        if tokio::time::Instant::now() >= deadline {
+                            let _ = resp.send(Err(DataStoreError::DeadlineExceeded));
+                            continue;
+                        }
+                        let fetch = client.fetch_ambient_conditions(start, end, max_entries).instrument(span.clone());
+                        tokio::pin!(fetch);
+                        let res = tokio::select! {
+                            result = &mut fetch => result,
+                            _ = cancellation.cancelled() => Err(DataStoreError::Cancelled),
+                            _ = tokio::time::sleep_until(deadline) => Err(DataStoreError::DeadlineExceeded),
+                            _ = cancellation_token.cancelled() => {
+                                let _ = resp.send(Err(DataStoreError::Cancelled));
+                                return;
+                            }
+                        };
                         span.in_scope(|| {
                             info!(
                                 operation = "redis.fetch_ambient_conditions",
@@ -50,12 +73,36 @@ pub async fn run(
                             debug!(operation = "redis.fetch_ambient_conditions", "Redis fetch result returned");
                         });
                     }
-                    DatastoreOperation::FetchAmbientConditionsWithSampling { start, end, samples, span, resp } => {
-                        let res = client
+                    DatastoreOperation::FetchAmbientConditionsWithSampling {
+                        start,
+                        end,
+                        samples,
+                        deadline,
+                        cancellation,
+                        span,
+                        resp,
+                    } => {
+                        if cancellation.is_cancelled() {
+                            let _ = resp.send(Err(DataStoreError::Cancelled));
+                            continue;
+                        }
+                        if tokio::time::Instant::now() >= deadline {
+                            let _ = resp.send(Err(DataStoreError::DeadlineExceeded));
+                            continue;
+                        }
+                        let fetch = client
                             .fetch_ambient_conditions_with_sampling(start, end, samples)
-                            .instrument(span.clone())
-                            .await
-                            .map_err(Into::into);
+                            .instrument(span.clone());
+                        tokio::pin!(fetch);
+                        let res = tokio::select! {
+                            result = &mut fetch => result,
+                            _ = cancellation.cancelled() => Err(DataStoreError::Cancelled),
+                            _ = tokio::time::sleep_until(deadline) => Err(DataStoreError::DeadlineExceeded),
+                            _ = cancellation_token.cancelled() => {
+                                let _ = resp.send(Err(DataStoreError::Cancelled));
+                                return;
+                            }
+                        };
                         span.in_scope(|| {
                             info!(
                                 operation = "redis.fetch_ambient_conditions_with_sampling",
@@ -115,10 +162,55 @@ fn log_received_operation(operation: &DatastoreOperation) {
 mod tests {
     use super::*;
     use common::model::ambient_condition;
+    use common::model::repository::datastore::DataStoreError;
     use mockall::mock;
     use redis::{RedisError, ToRedisArgs, Value};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     use tokio::sync::oneshot;
     use tokio_util::sync::CancellationToken;
+
+    struct StallOnceDataStore {
+        calls: Arc<AtomicUsize>,
+        started: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl DataStoreRepository for StallOnceDataStore {
+        async fn fetch_ambient_conditions<T: ToRedisArgs + Clone + Send + Sync + 'static + std::fmt::Debug>(
+            &mut self,
+            _start: T,
+            _end: T,
+            _max_entries: usize,
+        ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, DataStoreError> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                self.started.notify_one();
+                std::future::pending().await
+            } else {
+                Ok(std::collections::HashMap::new())
+            }
+        }
+
+        async fn fetch_ambient_conditions_with_sampling<
+            T: ToRedisArgs + Clone + Send + Sync + 'static + std::fmt::Debug,
+        >(
+            &mut self,
+            _start: T,
+            _end: T,
+            _samples: T,
+        ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, DataStoreError> {
+            Ok(std::collections::HashMap::new())
+        }
+
+        async fn save_ambient_condition(
+            &mut self,
+            _ambient_condition: ambient_condition::AmbientCondition,
+        ) -> Result<Value, RedisError> {
+            Ok(Value::Nil)
+        }
+    }
 
     mock! {
         pub DataStore {}
@@ -131,7 +223,8 @@ mod tests {
                 &mut self,
                 start: T,
                 end: T,
-            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, RedisError>;
+                max_entries: usize,
+            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, DataStoreError>;
 
             async fn fetch_ambient_conditions_with_sampling<
                 T: ToRedisArgs + Clone + std::marker::Send + std::marker::Sync + 'static + std::fmt::Debug,
@@ -140,7 +233,7 @@ mod tests {
                 start: T,
                 end: T,
                 samples: T,
-            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, RedisError>;
+            ) -> Result<std::collections::HashMap<String, ambient_condition::AmbientCondition>, DataStoreError>;
 
             async fn save_ambient_condition(
                 &mut self,
@@ -152,9 +245,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn handles_fetch_and_sampling_requests() {
         let mut datastore = MockDataStore::new();
-        datastore.expect_fetch_ambient_conditions().returning(|s: String, e: String| {
+        datastore.expect_fetch_ambient_conditions().returning(|s: String, e: String, max_entries| {
             assert_eq!(s, "0");
             assert_eq!(e, "1");
+            assert_eq!(max_entries, 5000);
             Ok(std::collections::HashMap::new())
         });
         datastore.expect_fetch_ambient_conditions_with_sampling().returning(|s: String, e: String, samples: String| {
@@ -174,6 +268,9 @@ mod tests {
             tx.send(DatastoreOperation::FetchAmbientConditions {
                 start: "0".into(),
                 end: "1".into(),
+                max_entries: 5000,
+                deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+                cancellation: CancellationToken::new(),
                 span: tracing::Span::current(),
                 resp: resp_tx1,
             })
@@ -186,6 +283,8 @@ mod tests {
                 start: "0".into(),
                 end: "1".into(),
                 samples: "2".into(),
+                deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+                cancellation: CancellationToken::new(),
                 span: tracing::Span::current(),
                 resp: resp_tx2,
             })
@@ -204,16 +303,23 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn propagates_datastore_errors_for_fetch_and_sampling_requests() {
         let mut datastore = MockDataStore::new();
-        datastore.expect_fetch_ambient_conditions().returning(|s: String, e: String| {
+        datastore.expect_fetch_ambient_conditions().returning(|s: String, e: String, max_entries| {
             assert_eq!(s, "0");
             assert_eq!(e, "1");
-            Err(RedisError::from((redis::ErrorKind::Io, "fetch failed")))
+            assert_eq!(max_entries, 5000);
+            Err(DataStoreError::from(RedisError::from((
+                redis::ErrorKind::Io,
+                "fetch failed",
+            ))))
         });
         datastore.expect_fetch_ambient_conditions_with_sampling().returning(|s: String, e: String, samples: String| {
             assert_eq!(s, "0");
             assert_eq!(e, "1");
             assert_eq!(samples, "2");
-            Err(RedisError::from((redis::ErrorKind::Io, "sampling failed")))
+            Err(DataStoreError::from(RedisError::from((
+                redis::ErrorKind::Io,
+                "sampling failed",
+            ))))
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel(2);
@@ -224,6 +330,9 @@ mod tests {
         tx.send(DatastoreOperation::FetchAmbientConditions {
             start: "0".into(),
             end: "1".into(),
+            max_entries: 5000,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation: CancellationToken::new(),
             span: tracing::Span::current(),
             resp: resp_tx1,
         })
@@ -240,6 +349,8 @@ mod tests {
             start: "0".into(),
             end: "1".into(),
             samples: "2".into(),
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation: CancellationToken::new(),
             span: tracing::Span::current(),
             resp: resp_tx2,
         })
@@ -260,7 +371,7 @@ mod tests {
         let mut datastore = MockDataStore::new();
         datastore
             .expect_fetch_ambient_conditions()
-            .returning(|_: String, _: String| Ok(std::collections::HashMap::new()));
+            .returning(|_: String, _: String, _: usize| Ok(std::collections::HashMap::new()));
         datastore
             .expect_fetch_ambient_conditions_with_sampling()
             .returning(|_: String, _: String, _: String| Ok(std::collections::HashMap::new()));
@@ -274,6 +385,9 @@ mod tests {
         tx.send(DatastoreOperation::FetchAmbientConditions {
             start: "0".into(),
             end: "1".into(),
+            max_entries: 5000,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation: CancellationToken::new(),
             span: tracing::Span::current(),
             resp: fetch_tx,
         })
@@ -286,6 +400,8 @@ mod tests {
             start: "0".into(),
             end: "1".into(),
             samples: "2".into(),
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation: CancellationToken::new(),
             span: tracing::Span::current(),
             resp: sampling_tx,
         })
@@ -325,5 +441,126 @@ mod tests {
         )
         .await
         .expect("worker did not stop after the request channel closed");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_expired_queued_work_without_calling_redis() {
+        let datastore = MockDataStore::new();
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let token = CancellationToken::new();
+        let worker = tokio::spawn(run(datastore, rx, token.clone()));
+        let (resp_tx, resp_rx) = oneshot::channel();
+
+        tx.send(DatastoreOperation::FetchAmbientConditions {
+            start: "0".into(),
+            end: "1".into(),
+            max_entries: 5000,
+            deadline: tokio::time::Instant::now() - std::time::Duration::from_millis(1),
+            cancellation: CancellationToken::new(),
+            span: tracing::Span::current(),
+            resp: resp_tx,
+        })
+        .await
+        .unwrap();
+
+        assert!(matches!(resp_rx.await.unwrap(), Err(DataStoreError::DeadlineExceeded)));
+        token.cancel();
+        worker.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancels_active_work_and_processes_the_next_request() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let datastore = StallOnceDataStore {
+            calls: calls.clone(),
+            started: started.clone(),
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        let shutdown = CancellationToken::new();
+        let worker = tokio::spawn(run(datastore, rx, shutdown.clone()));
+        let cancellation = CancellationToken::new();
+        let (first_tx, first_rx) = oneshot::channel();
+
+        tx.send(DatastoreOperation::FetchAmbientConditions {
+            start: "0".into(),
+            end: "1".into(),
+            max_entries: 5000,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation: cancellation.clone(),
+            span: tracing::Span::current(),
+            resp: first_tx,
+        })
+        .await
+        .unwrap();
+        started.notified().await;
+        cancellation.cancel();
+
+        assert!(matches!(first_rx.await.unwrap(), Err(DataStoreError::Cancelled)));
+
+        let (second_tx, second_rx) = oneshot::channel();
+        tx.send(DatastoreOperation::FetchAmbientConditions {
+            start: "0".into(),
+            end: "1".into(),
+            max_entries: 5000,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation: CancellationToken::new(),
+            span: tracing::Span::current(),
+            resp: second_tx,
+        })
+        .await
+        .unwrap();
+
+        assert!(second_rx.await.unwrap().is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        shutdown.cancel();
+        worker.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn times_out_active_work_and_processes_the_next_request() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let datastore = StallOnceDataStore {
+            calls: calls.clone(),
+            started: started.clone(),
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        let shutdown = CancellationToken::new();
+        let worker = tokio::spawn(run(datastore, rx, shutdown.clone()));
+        let (first_tx, first_rx) = oneshot::channel();
+
+        tx.send(DatastoreOperation::FetchAmbientConditions {
+            start: "0".into(),
+            end: "1".into(),
+            max_entries: 5000,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_millis(10),
+            cancellation: CancellationToken::new(),
+            span: tracing::Span::current(),
+            resp: first_tx,
+        })
+        .await
+        .unwrap();
+        started.notified().await;
+
+        assert!(matches!(first_rx.await.unwrap(), Err(DataStoreError::DeadlineExceeded)));
+
+        let (second_tx, second_rx) = oneshot::channel();
+        tx.send(DatastoreOperation::FetchAmbientConditions {
+            start: "0".into(),
+            end: "1".into(),
+            max_entries: 5000,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation: CancellationToken::new(),
+            span: tracing::Span::current(),
+            resp: second_tx,
+        })
+        .await
+        .unwrap();
+
+        assert!(second_rx.await.unwrap().is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        shutdown.cancel();
+        worker.await.unwrap();
     }
 }

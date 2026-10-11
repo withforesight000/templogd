@@ -2,13 +2,24 @@ use tonic::Status;
 
 use crate::usecase::error::UsecaseError;
 use crate::validator::error::ValidationError;
+use common::model::repository::datastore::DataStoreError;
 
 impl From<UsecaseError> for Status {
     /// Maps internal use-case failures to safe gRPC status values.
     fn from(error: UsecaseError) -> Self {
         match error {
             UsecaseError::DependencyUnavailable(message) => Status::unavailable(message),
-            UsecaseError::Storage(_) => Status::unavailable("data store operation failed"),
+            UsecaseError::ResourceExhausted(message) => Status::resource_exhausted(message),
+            UsecaseError::DeadlineExceeded => Status::deadline_exceeded("request deadline exceeded"),
+            UsecaseError::Cancelled => Status::cancelled("request cancelled"),
+            UsecaseError::Storage(DataStoreError::ResultLimitExceeded { .. }) => {
+                Status::resource_exhausted("ambient condition result limit exceeded")
+            }
+            UsecaseError::Storage(DataStoreError::DeadlineExceeded) => {
+                Status::deadline_exceeded("request deadline exceeded")
+            }
+            UsecaseError::Storage(DataStoreError::Cancelled) => Status::cancelled("request cancelled"),
+            UsecaseError::Storage(DataStoreError::Unavailable(_)) => Status::unavailable("data store operation failed"),
             UsecaseError::Internal(message) => Status::internal(message),
         }
     }
@@ -59,5 +70,26 @@ mod tests {
 
         assert_eq!(status.code(), tonic::Code::Unavailable);
         assert_eq!(status.message(), "data store operation failed");
+    }
+
+    #[test]
+    fn maps_capacity_and_deadline_errors() {
+        let status: Status = UsecaseError::resource_exhausted("queue full").into();
+        assert_eq!(status.code(), tonic::Code::ResourceExhausted);
+
+        let status: Status = UsecaseError::from(DataStoreError::ResultLimitExceeded { limit: 5000 }).into();
+        assert_eq!(status.code(), tonic::Code::ResourceExhausted);
+
+        let status: Status = UsecaseError::DeadlineExceeded.into();
+        assert_eq!(status.code(), tonic::Code::DeadlineExceeded);
+
+        let status: Status = UsecaseError::from(DataStoreError::DeadlineExceeded).into();
+        assert_eq!(status.code(), tonic::Code::DeadlineExceeded);
+
+        let status: Status = UsecaseError::Cancelled.into();
+        assert_eq!(status.code(), tonic::Code::Cancelled);
+
+        let status: Status = UsecaseError::from(DataStoreError::Cancelled).into();
+        assert_eq!(status.code(), tonic::Code::Cancelled);
     }
 }

@@ -4,6 +4,9 @@ use serde_json::Value;
 use crate::infra::http_client::errors::ClientError;
 
 /// Provides the outbound HTTP operations used by external-service gateways.
+// async-trait generates a must-use Future for each method; the Future already
+// carries Rust's built-in must-use contract.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait HttpClient {
     /// Fetches a JSON response using a bearer token without exposing the token in diagnostics.

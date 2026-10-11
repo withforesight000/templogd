@@ -26,7 +26,7 @@ This repository hosts a pair of Rust services that collect ambient sensor readin
 2. Export the required environment variables (see below) or pass them as CLI flags.
 3. Launch the binaries:
    - `cargo run -p templogd -- --api-token "$TEMPLOGD_NATURE_REMO_API_TOKEN" --device-id "$TEMPLOGD_NATURE_REMO_DEVICE_ID" --redis-host 127.0.0.1 --redis-port 6379`
-   - `cargo run -p tempgrpcd -- --server-bind-address 0.0.0.0 --server-port 50051 --bearer-token "$TEMPGRPCD_BEARER_TOKEN" --redis-host 127.0.0.1 --redis-port 6379`
+   - `cargo run -p tempgrpcd -- --server-bind-address 127.0.0.1 --server-port 50051 --bearer-token "$TEMPGRPCD_BEARER_TOKEN" --redis-host 127.0.0.1 --redis-port 6379 --allow-direct-clients`
 
 ### gRPC quick check
 Use `grpcurl` (or similar) to call the server once data exists in Redis:
@@ -60,6 +60,13 @@ Add a `"samples": 24` field when you want the Lua-powered down-sampling that app
 - `TEMPGRPCD_SERVER_PORT` – listening port.
 - `TEMPGRPCD_BEARER_TOKEN` – token expected in the `authorization` metadata header.
 - `TEMPGRPCD_REDIS_HOST` / `TEMPGRPCD_REDIS_PORT` – Redis endpoint shared with `templogd`.
+- `TEMPGRPCD_TRUSTED_PROXY_IPS` – comma-separated transport peer IPs allowed to call the history API. Required unless direct-client development mode is enabled.
+- `TEMPGRPCD_ALLOW_DIRECT_CLIENTS` (default: `false`) – bypasses peer validation for local development only. Pair it with a loopback listener or loopback-only published port; never enable it in production.
+- `TEMPGRPCD_MAX_RESULT_ENTRIES` (default and maximum: `5000`) – unsampled queries exceeding this limit fail without a partial response.
+- `TEMPGRPCD_MAX_SAMPLES` (default and maximum: `1000`).
+- `TEMPGRPCD_MAX_CONCURRENT_REQUESTS` (default and maximum: `4`) – global history RPC admission limit.
+- `TEMPGRPCD_REQUEST_TIMEOUT_MILLISECONDS` (default and maximum: `5000`).
+- `TEMPGRPCD_ACCEPT_LEGACY_MILLISECOND_TIMESTAMPS` (default: `false`) – temporary migration switch for old roomtemp clients.
 - `TEMPGRPCD_LOG_FORMAT` (default: `json`; supported values: `json`, `text`).
 - `TEMPGRPCD_LOG_LEVEL` (default: `info`; supported values: `trace`, `debug`, `info`, `warn`, `error`, `off`).
 

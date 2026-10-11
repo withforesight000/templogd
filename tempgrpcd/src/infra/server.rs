@@ -144,6 +144,13 @@ mod tests {
             bearer_token: "token".into(),
             redis_host: "localhost".into(),
             redis_port: 6379,
+            trusted_proxy_ips: "".into(),
+            allow_direct_clients: true,
+            max_result_entries: 5000,
+            max_samples: 1000,
+            max_concurrent_requests: 4,
+            request_timeout_milliseconds: 5000,
+            accept_legacy_millisecond_timestamps: false,
             log_format: crate::LogFormat::Json,
             log_level: crate::LogLevel::Info,
         }
@@ -151,7 +158,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn builds_grpc_router() {
-        let config = crate::config::new(args());
+        let config = crate::config::new(args()).unwrap();
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let _router = start_grpc_server_task(tx, config).await.unwrap();
     }
@@ -160,7 +167,7 @@ mod tests {
     async fn rejects_invalid_bearer_token_before_building_router() {
         let mut invalid_args = args();
         invalid_args.bearer_token = "token\n".into();
-        let config = crate::config::new(invalid_args);
+        let config = crate::config::new(invalid_args).unwrap();
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
 
         let result = start_grpc_server_task(tx, config).await;
@@ -170,7 +177,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn run_with_shuts_down_without_redis() {
-        let config = crate::config::new(args());
+        let config = crate::config::new(args()).unwrap();
 
         let start_datastore =
             |_cfg: Arc<Config>, _rx: tokio::sync::mpsc::Receiver<DatastoreOperation>, token: CancellationToken| {
@@ -198,7 +205,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn run_with_returns_an_error_when_redis_worker_exits() {
-        let config = crate::config::new(args());
+        let config = crate::config::new(args()).unwrap();
 
         let start_datastore =
             |_cfg: Arc<Config>, _rx: tokio::sync::mpsc::Receiver<DatastoreOperation>, _token: CancellationToken| {
@@ -222,7 +229,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn run_with_returns_redis_worker_panics() {
-        let config = crate::config::new(args());
+        let config = crate::config::new(args()).unwrap();
 
         let start_datastore =
             |_cfg: Arc<Config>, _rx: tokio::sync::mpsc::Receiver<DatastoreOperation>, _token: CancellationToken| {
@@ -255,7 +262,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let mut server_args = args();
         server_args.server_port = port.to_string();
-        let config = crate::config::new(server_args);
+        let config = crate::config::new(server_args).unwrap();
 
         let start_datastore =
             |_cfg: Arc<Config>, _rx: tokio::sync::mpsc::Receiver<DatastoreOperation>, token: CancellationToken| {
@@ -285,7 +292,7 @@ mod tests {
     async fn run_with_rejects_invalid_bind_addresses_before_starting_tasks() {
         let mut server_args = args();
         server_args.server_port = "invalid".into();
-        let config = crate::config::new(server_args);
+        let config = crate::config::new(server_args).unwrap();
 
         let start_datastore =
             |_cfg: Arc<Config>, _rx: tokio::sync::mpsc::Receiver<DatastoreOperation>, _token: CancellationToken| {

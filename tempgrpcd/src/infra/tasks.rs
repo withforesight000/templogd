@@ -16,6 +16,19 @@ use common::{gateway::datastore::DataStore, model::channel::datastore_operation:
 
 pub(super) const REDIS_XRANGE_WITH_SAMPLING: &str = "xrange_with_sampling";
 
+#[derive(Template)]
+#[template(path = "xrange_with_sampling.lua.j2")]
+struct XRANGEWithSamplingTemplate<'a> {
+    function_name: &'a str,
+}
+
+fn render_sampling_function() -> Result<String, askama::Error> {
+    XRANGEWithSamplingTemplate {
+        function_name: REDIS_XRANGE_WITH_SAMPLING,
+    }
+    .render()
+}
+
 /// Starts the Redis worker that loads the sampling function and handles datastore operations.
 #[instrument(level = "debug", name = "infra.start_datastore_task", skip_all)]
 pub(super) fn start_datastore_task(
@@ -38,17 +51,7 @@ pub(super) fn start_datastore_task(
 async fn initialize_datastore(
     config: Arc<Config>,
 ) -> Result<DataStore<common::infra::async_redis_client::AsyncRedisCrateClient>, ServerError> {
-    #[derive(Template)]
-    #[template(path = "xrange_with_sampling.lua.j2")]
-    struct XRANGEWithSamplingTemplate<'a> {
-        function_name: &'a str,
-    }
-
-    let xrange_with_sampling_code = XRANGEWithSamplingTemplate {
-        function_name: REDIS_XRANGE_WITH_SAMPLING,
-    }
-    .render()
-    .map_err(ServerError::RenderSamplingFunction)?;
+    let xrange_with_sampling_code = render_sampling_function().map_err(ServerError::RenderSamplingFunction)?;
 
     let mut datastore_client = DataStore::new(
         common::infra::async_redis_client::AsyncRedisCrateClient::new(&format!(
@@ -164,5 +167,28 @@ mod tests {
         });
 
         assert_eq!(*signals.lock().unwrap(), ["SIGINT", "SIGTERM"]);
+    }
+
+    #[tokio::test]
+    async fn redis_rejects_invalid_sampling_counts() {
+        use common::gateway::interface::redis::Redis;
+
+        let Ok(redis_url) = std::env::var("TEMPGRPCD_TEST_REDIS_URL") else {
+            return;
+        };
+        let code = render_sampling_function().unwrap();
+        let mut client = common::infra::async_redis_client::AsyncRedisCrateClient::new(&redis_url).await.unwrap();
+        client.function_load(true, &code).await.unwrap();
+
+        for invalid in ["0", "-1", "1.5", "1001", "not-a-number"] {
+            let result = client
+                .fcall(
+                    REDIS_XRANGE_WITH_SAMPLING,
+                    &["ambient_condition"],
+                    &["0-0", "1-0", invalid],
+                )
+                .await;
+            assert!(result.is_err(), "sample_count={invalid} should fail");
+        }
     }
 }

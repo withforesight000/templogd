@@ -1,5 +1,7 @@
 use crate::model::ambient_condition::AmbientCondition;
 use crate::model::repository::datastore::DataStoreError;
+use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 /// Work items that the Redis fetch loop receives over its MPSC channel.
 #[derive(Debug)]
@@ -8,6 +10,9 @@ pub enum DatastoreOperation {
     FetchAmbientConditions {
         start: String,
         end: String,
+        max_entries: usize,
+        deadline: Instant,
+        cancellation: CancellationToken,
         /// Span of the gRPC request that originated this datastore operation.
         span: tracing::Span,
         resp: tokio::sync::oneshot::Sender<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>,
@@ -17,6 +22,8 @@ pub enum DatastoreOperation {
         start: String,
         end: String,
         samples: String,
+        deadline: Instant,
+        cancellation: CancellationToken,
         /// Span of the gRPC request that originated this datastore operation.
         span: tracing::Span,
         resp: tokio::sync::oneshot::Sender<Result<std::collections::HashMap<String, AmbientCondition>, DataStoreError>>,
@@ -37,6 +44,9 @@ mod tests {
         let op = DatastoreOperation::FetchAmbientConditions {
             start: "s".to_string(),
             end: "e".to_string(),
+            max_entries: 5,
+            deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+            cancellation: CancellationToken::new(),
             span: tracing::Span::current(),
             resp: tx,
         };
