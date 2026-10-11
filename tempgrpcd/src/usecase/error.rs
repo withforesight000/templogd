@@ -35,6 +35,10 @@ impl UsecaseError {
         Self::DependencyUnavailable(message.into())
     }
 
+    /// Creates an error explaining why the service could not admit more bounded work.
+    ///
+    /// The message should identify the exhausted queue, concurrency limit, or other
+    /// capacity boundary without including request payloads or credentials.
     pub fn resource_exhausted(message: impl Into<String>) -> Self {
         Self::ResourceExhausted(message.into())
     }
