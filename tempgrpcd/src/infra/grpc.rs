@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use tempgrpcd_protos::tempgrpcd::v1::tempgrpcd_service_server::TempgrpcdServiceServer;
 use tokio::sync::mpsc;
-use tonic::transport::{Server, server::Router};
+use tonic::{
+    service::interceptor::InterceptedService,
+    transport::{Server, server::Router},
+};
 use tonic_reflection::server::Builder;
 use tracing::{info_span, instrument};
 
@@ -78,7 +81,113 @@ pub(super) async fn start_grpc_server_task(
                 method = %request.uri().path(),
             )
         })
-        .add_service(TempgrpcdServiceServer::with_interceptor(grpc_service, auth_interceptor))
+        .add_service(TempgrpcdServiceServer::with_interceptor(
+            grpc_service,
+            auth_interceptor.clone(),
+        ))
         .add_service(reflection)
-        .add_service(health_server))
+        .add_service(InterceptedService::new(health_server, auth_interceptor)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_util::sync::CancellationToken;
+    use tonic::{
+        Code, Request,
+        transport::{Channel, server::TcpIncoming},
+    };
+    use tonic_health::pb::{HealthCheckRequest, health_check_response::ServingStatus, health_client::HealthClient};
+
+    /// Starts the production router on an ephemeral port without a Redis worker.
+    async fn server(
+        direct: bool,
+        trusted: &str,
+    ) -> (HealthClient<Channel>, CancellationToken, tokio::task::JoinHandle<()>) {
+        let config = crate::config::new(crate::TempgrpcdArgs {
+            server_bind_address: "127.0.0.1".into(),
+            server_port: "0".into(),
+            bearer_token: "test-token".into(),
+            redis_host: "localhost".into(),
+            redis_port: 6379,
+            trusted_proxy_ips: trusted.into(),
+            allow_direct_clients: direct,
+            max_result_entries: 5000,
+            max_samples: 1000,
+            max_concurrent_requests: 4,
+            request_timeout_milliseconds: 5000,
+            accept_legacy_millisecond_timestamps: false,
+            log_format: crate::LogFormat::Json,
+            log_level: crate::LogLevel::Info,
+        })
+        .unwrap();
+        let (tx, _rx) = mpsc::channel(1);
+        let router = start_grpc_server_task(tx, config).await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let stop = CancellationToken::new();
+        let shutdown = stop.clone();
+        let task = tokio::spawn(async move {
+            router.serve_with_incoming_shutdown(TcpIncoming::from(listener), shutdown.cancelled()).await.unwrap();
+        });
+        let client =
+            HealthClient::new(Channel::from_shared(format!("http://{address}")).unwrap().connect().await.unwrap());
+        (client, stop, task)
+    }
+
+    /// Builds health metadata without exposing the token in assertions or logs.
+    fn request(service: &str, token: Option<&str>) -> Request<HealthCheckRequest> {
+        let mut req = Request::new(HealthCheckRequest {
+            service: service.into(),
+        });
+        if let Some(token) = token {
+            req.metadata_mut().insert("authorization", token.parse().unwrap());
+        }
+        req
+    }
+
+    #[tokio::test]
+    async fn health_check_and_watch_require_authentication() {
+        let (mut client, stop, task) = server(true, "").await;
+        let name = "tempgrpcd.v1.TempgrpcdService";
+        for token in [None, Some("Bearer wrong")] {
+            assert_eq!(
+                client.check(request(name, token)).await.unwrap_err().code(),
+                Code::Unauthenticated
+            );
+            assert_eq!(
+                client.watch(request(name, token)).await.unwrap_err().code(),
+                Code::Unauthenticated
+            );
+        }
+        let response = client.check(request(name, Some("Bearer test-token"))).await.unwrap().into_inner();
+        assert_eq!(response.status, ServingStatus::Serving as i32);
+        assert_eq!(
+            client.check(request("unknown", Some("Bearer test-token"))).await.unwrap_err().code(),
+            Code::NotFound
+        );
+        let mut stream = client.watch(request(name, Some("Bearer test-token"))).await.unwrap().into_inner();
+        assert_eq!(
+            stream.message().await.unwrap().unwrap().status,
+            ServingStatus::Serving as i32
+        );
+        drop(stream);
+        stop.cancel();
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn health_enforces_transport_peer_policy() {
+        for (trusted, allowed) in [("127.0.0.1", true), ("192.0.2.1", false)] {
+            let (mut client, stop, task) = server(false, trusted).await;
+            let result = client.check(request("tempgrpcd.v1.TempgrpcdService", Some("Bearer test-token"))).await;
+            if allowed {
+                assert!(result.is_ok());
+            } else {
+                assert_eq!(result.unwrap_err().code(), Code::Unauthenticated);
+            }
+            stop.cancel();
+            task.await.unwrap();
+        }
+    }
 }
