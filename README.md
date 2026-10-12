@@ -93,3 +93,16 @@ docker compose up --build
 ## Troubleshooting
 - **Redis script errors** – the server loads `xrange_with_sampling` under the `mylib` library. Flush scripts with `FT.CALL`? no; if the LUA function signature changes, restart Redis or run `FUNCTION FLUSH` (with caution) before redeploying.
 - **Nature Remo authentication** – the API returns HTTP 401 if the token is invalid; the daemon logs the failure and retries after the 30-second interval.
+
+### Authenticated gRPC health checks
+
+Both `grpc.health.v1.Health/Check` and `Watch` require the same
+`authorization: Bearer <token>` metadata and transport-peer permission as data
+requests. Anonymous health probes are no longer supported; configure monitoring
+clients with authentication before deploying this version.
+
+Check the named service `tempgrpcd.v1.TempgrpcdService`. A `SERVING` response
+confirms authenticated gRPC availability, not Redis readiness or successful
+data retrieval. Deploy this server before clients that rely on authenticated
+health checks. During rollback, revert those clients before restoring a server
+with public health checks. Never print tokens in probe logs.
