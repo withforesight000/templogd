@@ -1,108 +1,119 @@
-# templogd Workspace
+# templogd
 
-This repository hosts a pair of Rust services that collect ambient sensor readings from a Nature Remo device and expose that data over gRPC. The services share a `common` library and persist data inside Redis Streams so that historical readings can be queried efficiently.
+`templogd` collects temperature, humidity, and illumination from a Nature Remo device. It polls the Nature Remo REST API every 30 seconds, uses a bearer token to authenticate, and selects the device by ID. It writes the three fields (`temperature`, `humidity`, and `illumination`) to the Redis stream `ambient_condition` with an automatically generated entry ID.
 
-## Components
-- **templogd** – asynchronous daemon that polls the Nature Remo REST API every 30 seconds and appends temperature, humidity, and illumination readings to a Redis stream.
-- **tempgrpcd** – gRPC server that reads the same Redis stream and returns ambient readings, optionally down-sampled via a Lua helper that is loaded into Redis at startup.
-- **common** – shared abstractions for HTTP access, Redis integration, models, and cross-crate messaging.
+`tempgrpcd` serves those readings through the authenticated gRPC method `tempgrpcd.v1.TempgrpcdService/GetAmbientConditions`. For requests without `samples`, it uses Redis `XRANGE` to read the requested time range. With `samples` set, it calls the Lua function `xrange_with_sampling`. If the range contains more readings than requested, the function looks for readings near evenly spaced points in the range.
 
-## Architecture & Data Flow
-1. `templogd` authenticates against the Nature Remo API using a bearer token and selects a device by ID.
-2. Each reading is pushed to the Redis stream `ambient_condition` with an auto-generated ID (`*`), storing three fields: `temperature`, `humidity`, and `illumination`.
-3. `tempgrpcd` exposes a single gRPC method `tempgrpcd.v1.TempgrpcdService/GetAmbientConditions` that queries Redis:
-   - When `samples` is unset, the service runs `XRANGE` between the requested timestamps.
-   - When `samples` is provided, Redis executes the registered Lua function (`xrange_with_sampling`) to return monotonically spaced samples across the interval.
-4. Both binaries rely on Tokio, tracing instrumentation, and a lightweight in-process message bus (`tokio::mpsc`) to isolate I/O from business logic.
+Both services run on Tokio, use `tracing` for logs, and communicate with their Redis workers through bounded `tokio::mpsc` channels. The `common` crate contains shared models, repository traits, HTTP and Redis adapters, and channel message types.
 
-## Prerequisites
-- Rust toolchain with 2024 edition support (Rust 1.82+). Run `rustup update` if your compiler is older.
-- `protobuf-compiler` (a.k.a. `protoc`) so `tempgrpcd` can build gRPC descriptors.
-- Redis 7.x for local development, or access to a compatible Redis deployment.
-- Nature Remo API token and the target device ID.
+## Run locally
 
-## Running Locally
-1. Start Redis (for example: `docker run --rm -p 6379:6379 redis:7`).
-2. Export the required environment variables (see below) or pass them as CLI flags.
-3. Launch the binaries:
-   - `cargo run -p templogd -- --api-token "$TEMPLOGD_NATURE_REMO_API_TOKEN" --device-id "$TEMPLOGD_NATURE_REMO_DEVICE_ID" --redis-host 127.0.0.1 --redis-port 6379`
-   - `cargo run -p tempgrpcd -- --server-bind-address 127.0.0.1 --server-port 50051 --bearer-token "$TEMPGRPCD_BEARER_TOKEN" --redis-host 127.0.0.1 --redis-port 6379 --allow-direct-clients`
+You need a current stable Rust toolchain with Rust 2024 support, Redis 7, and a Nature Remo API token and device ID. To try the gRPC example, install a version of `grpcurl` that supports v1 server reflection. [grpcurl 1.8.8 release notes](https://github.com/fullstorydev/grpcurl/releases/tag/v1.8.8)
 
-### gRPC quick check
-Use `grpcurl` (or similar) to call the server once data exists in Redis:
+1. Start Redis, for example with `docker run --rm -p 127.0.0.1:6379:6379 redis:7`.
+2. Export `TEMPLOGD_NATURE_REMO_API_TOKEN`, `TEMPLOGD_NATURE_REMO_DEVICE_ID`, and `TEMPGRPCD_BEARER_TOKEN`. See [Environment variables](#environment-variables) for the full list of settings. Both services also accept command-line options.
+3. Run the services in separate terminals with those variables set.
 
-```bash
+   ```sh
+   cargo run -p templogd -- --redis-host 127.0.0.1 --redis-port 6379
+   ```
+
+   ```sh
+   cargo run -p tempgrpcd -- --server-bind-address 127.0.0.1 --server-port 50051 --redis-host 127.0.0.1 --redis-port 6379 --allow-direct-clients
+   ```
+
+### Query readings with grpcurl
+
+Once Redis contains readings, use the server's gRPC reflection service to call `GetAmbientConditions`. Replace the example timestamps with an RFC 3339 time range that contains your readings. Add `"samples": 24` to the JSON request to ask for up to 24 samples. [Protobuf timestamp format](https://protobuf.dev/programming-guides/json/#well-known-types)
+
+```sh
 grpcurl \
   -plaintext \
-  -import-path path/to/protos \
-  -proto tempgrpcd/v1/service.proto \
   -H "authorization: Bearer $TEMPGRPCD_BEARER_TOKEN" \
   -d '{
-        "startTime": { "seconds": "1715059200" },
-        "endTime":   { "seconds": "1715062800" }
+        "startTime": "2024-05-07T05:20:00Z",
+        "endTime":   "2024-05-07T06:20:00Z"
       }' \
-  localhost:50051 tempgrpcd.v1.TempgrpcdService/GetAmbientConditions
+  127.0.0.1:50051 tempgrpcd.v1.TempgrpcdService/GetAmbientConditions
 ```
-
-Add a `"samples": 24` field when you want the Lua-powered down-sampling that approximates the interval into evenly spaced buckets.
-
-## Environment Variables
-### templogd
-- `TEMPLOGD_NATURE_REMO_API_TOKEN` – bearer token issued by Nature Remo.
-- `TEMPLOGD_NATURE_REMO_DEVICE_ID` – device identifier to filter the API response.
-- `TEMPLOGD_REDIS_HOST` (default: `127.0.0.1`).
-- `TEMPLOGD_REDIS_PORT` (default: `6379`).
-- `TEMPLOGD_LOG_FORMAT` (default: `json`; supported values: `json`, `text`).
-- `TEMPLOGD_LOG_LEVEL` (default: `info`; supported values: `trace`, `debug`, `info`, `warn`, `error`, `off`).
-
-### tempgrpcd
-- `TEMPGRPCD_SERVER_BIND_ADDRESS` – address to bind (e.g. `0.0.0.0`).
-- `TEMPGRPCD_SERVER_PORT` – listening port.
-- `TEMPGRPCD_BEARER_TOKEN` – token expected in the `authorization` metadata header.
-- `TEMPGRPCD_REDIS_HOST` / `TEMPGRPCD_REDIS_PORT` – Redis endpoint shared with `templogd`.
-- `TEMPGRPCD_TRUSTED_PROXY_IPS` – comma-separated transport peer IPs allowed to call the history API. Required unless direct-client development mode is enabled.
-- `TEMPGRPCD_ALLOW_DIRECT_CLIENTS` (default: `false`) – bypasses peer validation for local development only. Pair it with a loopback listener or loopback-only published port; never enable it in production.
-- `TEMPGRPCD_MAX_RESULT_ENTRIES` (default and maximum: `5000`) – unsampled queries exceeding this limit fail without a partial response.
-- `TEMPGRPCD_MAX_SAMPLES` (default and maximum: `1000`).
-- `TEMPGRPCD_MAX_CONCURRENT_REQUESTS` (default and maximum: `4`) – global history RPC admission limit.
-- `TEMPGRPCD_REQUEST_TIMEOUT_MILLISECONDS` (default and maximum: `5000`).
-- `TEMPGRPCD_ACCEPT_LEGACY_MILLISECOND_TIMESTAMPS` (default: `false`) – temporary migration switch for old roomtemp clients.
-- `TEMPGRPCD_LOG_FORMAT` (default: `json`; supported values: `json`, `text`).
-- `TEMPGRPCD_LOG_LEVEL` (default: `info`; supported values: `trace`, `debug`, `info`, `warn`, `error`, `off`).
-
-## Docker & Compose
-The multi-stage `Dockerfile` uses `cargo-chef` to cache dependencies and exposes two stages named `templogd` and `tempgrpcd`. Build and run the entire stack with Redis using Docker Compose:
-
-```bash
-docker compose up --build
-```
-
-`docker compose` reads `compose.yml`, builds both binaries in release mode, and provisions Redis with a persistent volume (`redis-data`). Replace the placeholders in `compose.yml` with real credentials before running in production.
-
-## Development Workflow
-- Format: `cargo fmt`
-- Lint: `cargo clippy --all-targets --all-features`
-- Tests: `cargo test --workspace`
-
-## Directory Layout
-- `templogd/` – CLI, configuration, controllers, and use cases for the Nature Remo polling daemon.
-- `tempgrpcd/` – gRPC server, Redis fetch pipeline, and Askama template used to render the Lua sampling function.
-- `common/` – shared gateways (HTTP, Redis), models (`AmbientCondition`, repositories), and async client wrappers.
-- `compose.yml` / `Dockerfile` – container orchestration for development or deployment.
-
-## Troubleshooting
-- **Redis script errors** – the server loads `xrange_with_sampling` under the `mylib` library. Flush scripts with `FT.CALL`? no; if the LUA function signature changes, restart Redis or run `FUNCTION FLUSH` (with caution) before redeploying.
-- **Nature Remo authentication** – the API returns HTTP 401 if the token is invalid; the daemon logs the failure and retries after the 30-second interval.
 
 ### Authenticated gRPC health checks
 
-Both `grpc.health.v1.Health/Check` and `Watch` require the same
-`authorization: Bearer <token>` metadata and transport-peer permission as data
-requests. Anonymous health probes are no longer supported; configure monitoring
-clients with authentication before deploying this version.
+Both `grpc.health.v1.Health/Check` and `grpc.health.v1.Health/Watch` require `authorization: Bearer <token>` metadata and follow the same connection peer rules as data requests. Configure monitoring clients with authentication before deploying this version. Keep tokens out of probe logs.
 
-Check the named service `tempgrpcd.v1.TempgrpcdService`. A `SERVING` response
-confirms authenticated gRPC availability, not Redis readiness or successful
-data retrieval. Deploy this server before clients that rely on authenticated
-health checks. During rollback, revert those clients before restoring a server
-with public health checks. Never print tokens in probe logs.
+Check the named service `tempgrpcd.v1.TempgrpcdService`. A `SERVING` response confirms that an authenticated client can reach the gRPC service. To verify that the service can retrieve readings from Redis, query a time range that contains readings.
+
+Deploy the server before clients that rely on authenticated health checks. During rollback, revert those clients before restoring a server with public health checks.
+
+## Environment variables
+
+### templogd
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TEMPLOGD_NATURE_REMO_API_TOKEN` | Required | Bearer token issued by Nature Remo. |
+| `TEMPLOGD_NATURE_REMO_DEVICE_ID` | Required | Device ID used to select readings from the API response. |
+| `TEMPLOGD_REDIS_HOST` | Required | Redis hostname or IP address. |
+| `TEMPLOGD_REDIS_PORT` | `6379` | Redis port. |
+
+### tempgrpcd
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TEMPGRPCD_SERVER_BIND_ADDRESS` | Required | Address on which the server listens, such as `127.0.0.1`. |
+| `TEMPGRPCD_SERVER_PORT` | Required | gRPC listening port. |
+| `TEMPGRPCD_BEARER_TOKEN` | Required | Token expected in the `authorization` metadata. |
+| `TEMPGRPCD_REDIS_HOST` | Required | Hostname or IP address of the Redis instance used by `templogd`. |
+| `TEMPGRPCD_REDIS_PORT` | `6379` | Redis port. |
+| `TEMPGRPCD_TRUSTED_PROXY_IPS` | Empty | Comma-separated IP addresses of permitted connection peers. Required unless direct clients are allowed. |
+| `TEMPGRPCD_ALLOW_DIRECT_CLIENTS` | `false` | Skips connection peer validation for local development. Keep the listener or published port on loopback when using this option. Leave it disabled in production. |
+| `TEMPGRPCD_MAX_RESULT_ENTRIES` | `5000` | Maximum entries in an unsampled response. Queries over the limit fail without returning partial results. |
+| `TEMPGRPCD_MAX_SAMPLES` | `1000` | Maximum value a client can request for `samples`. |
+| `TEMPGRPCD_MAX_CONCURRENT_REQUESTS` | `4` | Maximum concurrent history RPCs across all connections. |
+| `TEMPGRPCD_REQUEST_TIMEOUT_MILLISECONDS` | `5000` | History RPC deadline in milliseconds. |
+| `TEMPGRPCD_ACCEPT_LEGACY_MILLISECOND_TIMESTAMPS` | `false` | Temporary compatibility option for old roomtemp clients that put milliseconds in the timestamp's `seconds` field. |
+
+The result limit, sample limit, concurrency limit, and request deadline must be positive. For each setting, the default is also the highest permitted value. Set `TEMPGRPCD_MAX_SAMPLES` at or below `TEMPGRPCD_MAX_RESULT_ENTRIES`.
+
+### Logging
+
+| Variables | Default | Accepted values |
+| --- | --- | --- |
+| `TEMPLOGD_LOG_FORMAT`, `TEMPGRPCD_LOG_FORMAT` | `json` | `json`, `text` |
+| `TEMPLOGD_LOG_LEVEL`, `TEMPGRPCD_LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`, `error`, `off` |
+
+## Run with Docker Compose
+
+Replace the `XXX` placeholders in [compose.yml](compose.yml) locally with the Nature Remo API token, the device ID, and the gRPC bearer token. Keep real credentials out of commits.
+
+```sh
+docker compose up --build
+```
+
+Compose builds release binaries using the `templogd` and `tempgrpcd` targets in the [Dockerfile](Dockerfile). The build uses `cargo-chef` to cache dependencies. Compose stores Redis data in the `redis-data` volume and publishes gRPC on `127.0.0.1:50051` with direct clients allowed by default.
+
+## Development workflow
+
+Run these local checks before submitting changes. CI also checks the sampling function against Redis 7 and reports test coverage.
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features --no-fail-fast
+```
+
+| Path | Contents |
+| --- | --- |
+| [templogd/](templogd/) | CLI, configuration, controllers, and use cases for the Nature Remo polling daemon. |
+| [tempgrpcd/](tempgrpcd/) | gRPC server, Redis queries, and the Askama template for the Lua sampling function. |
+| [common/](common/) | Shared gateways, domain models such as `AmbientCondition`, repository traits, and async client wrappers. |
+
+## Troubleshooting
+
+### Redis rejects the sampling function
+
+At startup, `tempgrpcd` loads the `mylib` library with replacement. If loading fails, check the Redis version and the startup error before changing the Redis function library.
+
+### Nature Remo returns HTTP 401
+
+Check the API token. The daemon logs the failed request and retries after 30 seconds.
