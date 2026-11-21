@@ -1,0 +1,74 @@
+name: Digest rerun test jobs
+'on':
+  workflow_call: {}
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+    - id: tag
+      run: echo "tag=validation-only" >> "$GITHUB_OUTPUT"
+  build:
+    name: Build (${{ matrix.service }}, ${{ matrix.arch }})
+    needs: prepare
+    runs-on: ${{ matrix.runs_on }}
+    outputs:
+      templogd_amd64: ${{ steps.digest.outputs.templogd_amd64 }}
+      templogd_arm64: ${{ steps.digest.outputs.templogd_arm64 }}
+      tempgrpcd_amd64: ${{ steps.digest.outputs.tempgrpcd_amd64 }}
+      tempgrpcd_arm64: ${{ steps.digest.outputs.tempgrpcd_arm64 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+        - templogd
+        - tempgrpcd
+        arch:
+        - amd64
+        - arm64
+        include:
+        - arch: amd64
+          runs_on: ubuntu-24.04
+        - arch: arm64
+          runs_on: ubuntu-24.04-arm
+    env:
+      SERVICE: ${{ matrix.service }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+    - id: build
+      shell: bash
+      run: "set -euo pipefail\nif [[ \"$GITHUB_RUN_ATTEMPT\" == 1 && \"$SERVICE-$ARCH\" == tempgrpcd-arm64 ]]; then\n  echo 'Intentional attempt 1 failure'\n  exit 1\nfi\ncase \"$SERVICE-$ARCH\" in\n  templogd-amd64) slot=1 ;;\n  templogd-arm64) slot=2 ;;\n  tempgrpcd-amd64) slot=3 ;;\n  tempgrpcd-arm64) slot=4 ;;\nesac\nprintf 'digest=sha256:%064x\\n' \"$((GITHUB_RUN_ATTEMPT * 16 + slot))\" >> \"$GITHUB_OUTPUT\"\n"
+    - name: Export verified digest
+      id: digest
+      env:
+        DIGEST: ${{ steps.build.outputs.digest }}
+      shell: bash
+      run: 'set -euo pipefail
+
+        [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+
+        # The matrix combines distinct output keys and reuses them for jobs that are not rerun.
+
+        printf ''%s_%s=%s\n'' "$SERVICE" "$ARCH" "$DIGEST" >> "$GITHUB_OUTPUT"
+
+        '
+  create-manifest:
+    name: Create multi-arch manifests
+    runs-on: ubuntu-latest
+    needs:
+    - prepare
+    - build
+    steps:
+    - name: Check selected digests
+      shell: bash
+      env:
+        IMAGE_TAG: ${{ needs.prepare.outputs.tag }}
+        TEMPLOGD_AMD64: ${{ needs.build.outputs.templogd_amd64 }}
+        TEMPLOGD_ARM64: ${{ needs.build.outputs.templogd_arm64 }}
+        TEMPGRPCD_AMD64: ${{ needs.build.outputs.tempgrpcd_amd64 }}
+        TEMPGRPCD_ARM64: ${{ needs.build.outputs.tempgrpcd_arm64 }}
+      run: "set -euo pipefail\ncase \"$GITHUB_RUN_ATTEMPT\" in\n  2|3) attempts=(1 1 1 2) ;;\n  4)   attempts=(4 4 4 4) ;;\n  *)   echo \"Unexpected manifest attempt $GITHUB_RUN_ATTEMPT\"; exit 1 ;;\nesac\nkeys=(TEMPLOGD_AMD64 TEMPLOGD_ARM64 TEMPGRPCD_AMD64 TEMPGRPCD_ARM64)\nfor i in \"${!keys[@]}\"; do\n  key=\"${keys[$i]}\"\n  printf -v expected 'sha256:%064x' \"$((attempts[i] * 16 + i + 1))\"\n  printf '%s = %s (expected %s)\\n' \"$key\" \"${!key}\" \"$expected\"\n  [[ \"${!key}\" == \"$expected\" ]]\ndone\n[[ \"$IMAGE_TAG\" == validation-only ]]\n"
+    - name: Fail manifest once to exercise a manifest-only rerun
+      shell: bash
+      run: "if [[ \"$GITHUB_RUN_ATTEMPT\" == 2 ]]; then\n  echo 'Intentional attempt 2 failure'\n  exit 1\nfi\n"

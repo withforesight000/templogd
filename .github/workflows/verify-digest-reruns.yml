@@ -1,0 +1,10 @@
+name: Verify digest reruns
+'on':
+  push:
+    branches:
+    - codex/verify-digest-reruns
+permissions:
+  contents: read
+jobs:
+  verify:
+    uses: ./.github/workflows/digest-rerun-test-jobs.yml
