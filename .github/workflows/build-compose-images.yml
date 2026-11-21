@@ -1,103 +1,177 @@
 name: Build Compose Images
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types:
-      - completed
+  workflow_call:
+    secrets:
+      DHI_USERNAME:
+        required: true
+      DHI_TOKEN:
+        required: true
+
+permissions:
+  contents: read
 
 jobs:
+  prepare:
+    name: Validate publication tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Select Docker tag
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" != push ]]; then
+            echo '::error::Images can only be published for push events.'
+            exit 1
+          fi
+          if [[ "$SOURCE_REF" == refs/heads/master ]]; then
+            tag=latest
+          elif [[ "$SOURCE_REF" == refs/tags/* ]]; then
+            tag="$SOURCE_TAG"
+            if [[ ! "$tag" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ || "$tag" == latest ]]; then
+              echo '::error::Git tag must be a valid Docker tag (1-128 ASCII characters); latest is reserved for master.'
+              exit 1
+            fi
+          else
+            echo '::error::Images can only be published from master or a Git tag.'
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   build:
-    name: Build (${{ matrix.arch }})
+    name: Build (${{ matrix.service }}, ${{ matrix.arch }})
+    needs: prepare
     runs-on: ${{ matrix.runs_on }}
+    outputs:
+      templogd_amd64: ${{ steps.digest.outputs.templogd_amd64 }}
+      templogd_arm64: ${{ steps.digest.outputs.templogd_arm64 }}
+      tempgrpcd_amd64: ${{ steps.digest.outputs.tempgrpcd_amd64 }}
+      tempgrpcd_arm64: ${{ steps.digest.outputs.tempgrpcd_arm64 }}
     strategy:
       fail-fast: false
       matrix:
+        service: [templogd, tempgrpcd]
+        arch: [amd64, arm64]
         include:
           - arch: amd64
-            platform: linux/amd64
             runs_on: ubuntu-24.04
           - arch: arm64
-            platform: linux/arm64
             runs_on: ubuntu-24.04-arm
-
     permissions:
       contents: read
       packages: write
-
     env:
-      IMAGE_TAG: latest-${{ matrix.arch }}
-
+      IMAGE: ghcr.io/withforesight000/${{ matrix.service }}
+      SERVICE: ${{ matrix.service }}
+      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v7
-
-      - name: Show runner info
-        run: |
-          echo "arch=${{ matrix.arch }}"
-          uname -a
-          docker --version
-
+        with:
+          ref: ${{ github.sha }}
       - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
+      - name: Log in to DHI
+        uses: docker/login-action@v3
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DHI_USERNAME }}
+          password: ${{ secrets.DHI_TOKEN }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push templogd
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          target: templogd
-          push: true
-          platforms: ${{ matrix.platform }}
-          tags: ghcr.io/withforesight000/templogd:${{ env.IMAGE_TAG }}
+          target: ${{ matrix.service }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=ghcr.io/withforesight000/${{ matrix.service }},push-by-digest=true,name-canonical=true,push=true
+          labels: org.opencontainers.image.revision=${{ github.sha }}
           provenance: false
-          cache-from: type=gha,scope=templogd-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=templogd-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ matrix.arch }}
           pull: true
-
-      - name: Build and push tempgrpcd
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          target: tempgrpcd
-          push: true
-          platforms: ${{ matrix.platform }}
-          tags: ghcr.io/withforesight000/tempgrpcd:${{ env.IMAGE_TAG }}
-          provenance: false
-          cache-from: type=gha,scope=tempgrpcd-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=tempgrpcd-${{ matrix.arch }}
-          pull: true
+      - name: Verify published runtime image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          REVISION: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$IMAGE@$DIGEST"
+          docker pull "$image"
+          docker image inspect "$image" | jq -e --arg arch "$ARCH" --arg revision "$REVISION" --arg binary "/usr/local/bin/$SERVICE" '
+            .[0] | .Os == "linux" and .Architecture == $arch and
+            (.Config | .User == "65532:65532" and
+            ((.Entrypoint // []) == []) and .Cmd == [$binary] and
+            .Labels["org.opencontainers.image.revision"] == $revision)'
+          docker run --rm --network none --entrypoint "/usr/local/bin/$SERVICE" "$image" --help
+          container=$(docker create "$image")
+          trap 'docker rm "$container" >/dev/null' EXIT
+          docker cp "$container:/etc/ssl/certs/ca-certificates.crt" "$RUNNER_TEMP/ca-certificates.crt"
+          grep -q -- '-----BEGIN CERTIFICATE-----' "$RUNNER_TEMP/ca-certificates.crt"
+      - name: Export verified digest
+        id: digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          # The matrix combines distinct output keys and reuses them for jobs that are not rerun.
+          printf '%s_%s=%s\n' "$SERVICE" "$ARCH" "$DIGEST" >> "$GITHUB_OUTPUT"
 
   create-manifest:
     name: Create multi-arch manifests
     runs-on: ubuntu-latest
-    needs: build
-
+    needs: [prepare, build]
     permissions:
+      contents: read
       packages: write
-
     steps:
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create and push templogd manifest
+      - name: Publish and verify manifests
+        env:
+          IMAGE_TAG: ${{ needs.prepare.outputs.tag }}
+          TEMPLOGD_AMD64: ${{ needs.build.outputs.templogd_amd64 }}
+          TEMPLOGD_ARM64: ${{ needs.build.outputs.templogd_arm64 }}
+          TEMPGRPCD_AMD64: ${{ needs.build.outputs.tempgrpcd_amd64 }}
+          TEMPGRPCD_ARM64: ${{ needs.build.outputs.tempgrpcd_arm64 }}
+        shell: bash
         run: |
-          docker manifest create \
-            ghcr.io/withforesight000/templogd:latest \
-            ghcr.io/withforesight000/templogd:latest-amd64 \
-            ghcr.io/withforesight000/templogd:latest-arm64
-          docker manifest push ghcr.io/withforesight000/templogd:latest
-
-      - name: Create and push tempgrpcd manifest
-        run: |
-          docker manifest create \
-            ghcr.io/withforesight000/tempgrpcd:latest \
-            ghcr.io/withforesight000/tempgrpcd:latest-amd64 \
-            ghcr.io/withforesight000/tempgrpcd:latest-arm64
-          docker manifest push ghcr.io/withforesight000/tempgrpcd:latest
+          set -euo pipefail
+          for key in TEMPLOGD_AMD64 TEMPLOGD_ARM64 TEMPGRPCD_AMD64 TEMPGRPCD_ARM64; do
+            if [[ ! "${!key}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+              echo "::error::Missing or invalid verified digest for $key"
+              exit 1
+            fi
+          done
+          for service in templogd tempgrpcd; do
+            image="ghcr.io/withforesight000/$service"
+            amd64_key="${service^^}_AMD64"
+            arm64_key="${service^^}_ARM64"
+            amd64="${!amd64_key}"
+            arm64="${!arm64_key}"
+            docker buildx imagetools create --tag "$image:$IMAGE_TAG" "$image@$amd64" "$image@$arm64"
+            docker buildx imagetools inspect --raw "$image:$IMAGE_TAG" | jq -e \
+              --arg amd64 "$amd64" --arg arm64 "$arm64" '
+                (.manifests | length) == 2 and
+                any(.manifests[]; .digest == $amd64 and .platform.os == "linux" and .platform.architecture == "amd64") and
+                any(.manifests[]; .digest == $arm64 and .platform.os == "linux" and .platform.architecture == "arm64")'
+          done

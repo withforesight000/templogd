@@ -84,13 +84,40 @@ The result limit, sample limit, concurrency limit, and request deadline must be 
 
 ## Run with Docker Compose
 
+Authenticate to Docker Hardened Images (DHI) with your Docker username and a personal access token before building locally.
+
+```sh
+docker login dhi.io
+```
+
 Replace the `XXX` placeholders in [compose.yml](compose.yml) locally with the Nature Remo API token, the device ID, and the gRPC bearer token. Keep real credentials out of commits.
 
 ```sh
 docker compose up --build
 ```
 
-Compose builds release binaries using the `templogd` and `tempgrpcd` targets in the [Dockerfile](Dockerfile). The build uses `cargo-chef` to cache dependencies. Compose stores Redis data in the `redis-data` volume and publishes gRPC on `127.0.0.1:50051` with direct clients allowed by default.
+Compose builds release binaries using the `templogd` and `tempgrpcd` targets in the [Dockerfile](Dockerfile). The build uses `cargo-chef` to cache dependencies and compiles on `dhi.io/rust:1-debian13-dev`. Both services run on `dhi.io/debian-base:trixie-debian13` as UID/GID `65532:65532` and use the CA certificates provided by the base image. Compose stores Redis data in the `redis-data` volume and publishes gRPC on `127.0.0.1:50051` with direct clients allowed by default.
+
+### Automated image publishing
+
+GitHub Actions publishes `ghcr.io/withforesight000/templogd` and `ghcr.io/withforesight000/tempgrpcd` for `linux/amd64` and `linux/arm64`. Configure these repository Actions secrets before publishing:
+
+- `DHI_USERNAME`: Docker username used to pull DHI images.
+- `DHI_TOKEN`: Docker PAT used to authenticate to `dhi.io`.
+
+GHCR authentication uses the workflow's `GITHUB_TOKEN`; the publishing jobs require package write permission. Credentials are supplied to registry login actions, never as Docker build arguments.
+
+| Event | Published Docker tag |
+| --- | --- |
+| Push to `master` | `latest` |
+| Git tag push (for example, `v1.2.3`) | Same name (`v1.2.3`), without updating `latest` |
+| Push to `main`, or a pull request | No publication |
+
+Publication starts only after formatting, Clippy, and tests/coverage succeed for the triggering commit. Git tags must match `[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}`; invalid names and the reserved tag `latest` fail publication rather than being renamed.
+
+Each native architecture runner pushes by digest and verifies the resulting image's revision, nonroot configuration, CA bundle, and binary `--help` output without application credentials. Only after all builds pass are the verified digests combined into the public multi-architecture tags. A failure leaves the final tags unchanged until manifest publication starts; publication across the two services is not atomic. Concurrent master runs may finish out of order, so `latest` refers to the last successfully published master build. Use an image digest when a fixed revision is required.
+
+Before replacing a deployed image, record its digest. Reverting this repository does not restore an already published GHCR tag; restore the recorded digest separately when rolling back. This workflow publishes images only and does not deploy services.
 
 ## Development workflow
 
